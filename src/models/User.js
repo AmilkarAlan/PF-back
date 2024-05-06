@@ -77,7 +77,7 @@ const User = sequelize.define('User', {
     ban_expiration: {
         type: DataTypes.DATE,
         allowNull: true
-    }
+    },
 });
 
 

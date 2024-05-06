@@ -834,13 +834,12 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
     const password = req.body.password;
 
     try {
-
         //revisar el blacklist DeletedUser
         const blackListedUsername = await DeletedUser.findOne({ where: { username } });
         if (blackListedUsername) {
             return res.status(403).json({ message: 'Error, Tu cuenta ha sido eliminada.', userHasBeenDeleted: true });
         };
-
+        
         const user = await User.findOne({ where: { username } });
         if (!user) {
             return res.status(404).json({ message: `Username ${username} Not Found` });
@@ -857,6 +856,7 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
 
         res.json({ message: 'Login successful', accessToken, refreshToken });
     } catch (error) {
+        console.log(error);
         return res.status(500).json({ message: 'Internal Server Error.' });
     }
 });
@@ -946,6 +946,38 @@ app.post('/signup', async (req, res) => {
         } else {
             res.status(400).json({ message: 'fields must match' })
         }
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error.message}`);
+    }
+});
+// EDIT PROFILE:
+
+app.put('/profile/edit', async (req, res) => {
+    const { id, firstName, lastName, username, email, password, image } = req.body;
+
+    if (!id) {
+        return res.status(400).json('Missing user id');
+    };
+
+    try {
+        const user = await User.findOne({ where: { id } });
+        if (!user) {
+            return res.status(404).json('User not found');
+        }
+
+        if (firstName) user.first_name = firstName;
+        if (lastName) user.last_name = lastName;
+        if (username) user.username = username;
+        if (email) user.email = email;
+        // if (image) user.image = image;
+        if (password) {
+            const hashedPassword = await bcrypt.hash(password, 10);
+            user.password = hashedPassword;
+        }
+
+        await user.save();
+
+        return res.status(200).json(`User: ${user.username} updated successfully`);
     } catch (error) {
         res.status(500).json(`Internal Server Error: ${error.message}`);
     }
@@ -1518,7 +1550,7 @@ app.delete('/deleteuser/id/:id', isAuthenticated, isAdmin, async (req, res) => {
     }
 
     try {
-        const userToDelete = await User.findByPk(id );
+        const userToDelete = await User.findByPk(id);
         if (!userToDelete) {
             return res.status(404).json({
                 message: `No user with ID: ${id} was found.`,
@@ -1990,7 +2022,7 @@ app.get('/products/user/favorites', isAuthenticated, isUserBanned, async (req, r
         if (allFavorites.length === 0) {
             return res.status(404).json('No se han encontrado favoritos, intenta agregar uno.');
         } else {
-            res.json({ total: allFavorites.length, allFavorites });
+            res.json({ total: allFavorites.length, favorites: allFavorites });
         }
     } catch (error) {
         console.error('Error fetching favorites:', error);
