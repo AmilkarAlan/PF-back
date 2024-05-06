@@ -5,6 +5,12 @@ const Shipping = require('./Shipping');
 const Order = require('./Order');
 
 const User = sequelize.define('User', {
+    id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        autoIncrement: true,
+        primaryKey: true
+    },
     first_name: {
         type: DataTypes.STRING,
         allowNull: false

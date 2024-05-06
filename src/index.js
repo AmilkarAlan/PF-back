@@ -93,7 +93,7 @@ async function requireTwoFactorAuthentication(req, res, next) {
             return next();
         }
     } catch (error) {
-        
+
     }
 };
 
@@ -103,21 +103,21 @@ app.post('/verify', isAuthenticated, async (req, res) => {
     if (!otp) {
         return res.status(400).json('Faltan datos');
     }
-    
+
     const userId = req.user.userId;
     try {
         const user = await User.findByPk(userId);
         if (!user) {
             return res.status(404).json('Usuario no encontrado');
         }
-        
+
         const verified = speakeasy.totp.verify({
             secret: user.otp_secret, // va a vericar con la column otp_secret.
             encoding: 'base32',
             token: otp,
             window: 2
         });
-        
+
         if (verified) {
             return res.json({ verified: true });
         } else {
@@ -165,7 +165,7 @@ app.post('/create-checkout-session', isAuthenticated, isUserBanned, async (req, 
         };
 
 
-        const shippingInfo = await Shipping.findOne({where: {shippingId: reqShippingId}});
+        const shippingInfo = await Shipping.findOne({ where: { shippingId: reqShippingId } });
         if (!shippingInfo) {
             return res.status(404).json('No se encontró la información de envío especificada.');
         }
@@ -173,14 +173,14 @@ app.post('/create-checkout-session', isAuthenticated, isUserBanned, async (req, 
 
         shippingId = shippingInfo.shippingId;
         console.log(`USER SHIPPING ID: ${shippingId}`);
-        
 
-        transaction = await sequelize.transaction(); 
-        
+
+        transaction = await sequelize.transaction();
+
         const items = [];
         const outOfStockProducts = [];
         const paymentHistoryData = [];
-        let totalAmount = 0; 
+        let totalAmount = 0;
 
         const newOrder = await Order.create({
             userId: userId,
@@ -188,7 +188,7 @@ app.post('/create-checkout-session', isAuthenticated, isUserBanned, async (req, 
             paymentStatus: 'pending', // Assuming the initial status is pending
             shippingId: shippingId // Assigning the retrieved shippingId
         }, { transaction });
-        
+
         for (const product of products) {
             const checkProductExists = await Product.findByPk(product.id);
             if (!checkProductExists) {
@@ -218,8 +218,8 @@ app.post('/create-checkout-session', isAuthenticated, isUserBanned, async (req, 
                 price_data: {
                     currency: 'usd',
                     product_data: {
-                        name: productFromDB.product, 
-                        images: productFromDB.image ? [productFromDB.image] : [],
+                        name: productFromDB.product,
+                        images: productFromDB.image ? [ productFromDB.image ] : [],
                     },
                     unit_amount: productFromDB.price * 100, // Stripe lo pone en centavos asi que se multiplica.
                 },
@@ -228,10 +228,10 @@ app.post('/create-checkout-session', isAuthenticated, isUserBanned, async (req, 
 
             const subtotal = productFromDB.price * product.quantity;
             totalAmount += subtotal;
-                       
-    
+
+
             orderId = newOrder.id; // Retrieve the generated orderId
-    
+
             // Update paymentHistoryData with the correct orderId
             for (const data of paymentHistoryData) {
                 data.orderId = orderId;
@@ -251,16 +251,16 @@ app.post('/create-checkout-session', isAuthenticated, isUserBanned, async (req, 
         };
 
         newOrder.totalAmount = totalAmount;
-         await newOrder.save({ transaction });
+        await newOrder.save({ transaction });
 
         await transaction.commit();
 
         const session = await stripe.checkout.sessions.create({
-            payment_method_types: ['card'],
+            payment_method_types: [ 'card' ],
             line_items: items,
             mode: 'payment',
-            success_url: 'http://localhost:3000/paymenthistory', 
-            cancel_url: 'https://www.example.com/cancel', 
+            success_url: 'http://localhost:3000/paymenthistory',
+            cancel_url: 'https://www.example.com/cancel',
         });
 
         await PaymentHistory.bulkCreate(paymentHistoryData);
@@ -276,7 +276,7 @@ app.post('/create-checkout-session', isAuthenticated, isUserBanned, async (req, 
 });
 
 // debugging route.                         <-----
-app.get('/allorders',isAuthenticated, isAdmin, async(req, res) => {
+app.get('/allorders', isAuthenticated, isAdmin, async (req, res) => {
     try {
         // Retrieve all orders along with associated user and product information
         const allOrders = await Order.findAll({
@@ -302,11 +302,11 @@ app.get('/my-orders', isAuthenticated, isUserBanned, async (req, res) => {
             where: {
                 userId: userId
             },
-            include: [{
+            include: [ {
                 model: Product
             }, {
                 model: Shipping // Include the Shipping model here
-            }]
+            } ]
         });
 
         if (allUserOrders.length === 0) {
@@ -369,12 +369,12 @@ app.post('/user/shipping', isAuthenticated, isUserBanned, async (req, res) => {
         // nickname deberia ser unico.
         const existingShipping = await Shipping.findOne({ where: { userId: userId, nickname: nickname } });
         if (existingShipping) {
-            return res.status(400).json({error: 'Ya tienes una dirección de envío con el mismo apodo.', nicknameAlreadyInUse: true});
+            return res.status(400).json({ error: 'Ya tienes una dirección de envío con el mismo apodo.', nicknameAlreadyInUse: true });
         }
-        
+
         const addressCount = await Shipping.count({ where: { userId: userId } });
         if (addressCount >= 10) {
-            return res.status(400).json({error: 'Has alcanzado el límite máximo de direcciones de envío (10).', maxShipping: true});
+            return res.status(400).json({ error: 'Has alcanzado el límite máximo de direcciones de envío (10).', maxShipping: true });
         }
 
         // Create new shipping address
@@ -415,7 +415,7 @@ app.put('/update-shipping-info', isAuthenticated, isUserBanned, async (req, res)
             return res.status(404).json('No se encontró la información de envío para el usuario actual con el ID proporcionado.');
         }
 
-       
+
         await userShippingInfo.update({
             country: country || userShippingInfo.country,
             city: city || userShippingInfo.city,
@@ -434,12 +434,12 @@ app.put('/update-shipping-info', isAuthenticated, isUserBanned, async (req, res)
 
 
 // ruta para que un usuario pueda ver su info de envio.
-app.get('/shipping-info', isAuthenticated, isUserBanned, async(req, res) => {
-     const userId = req.user.userId;
-     
-     try {
-        
-        const userShippingInfo = await Shipping.findAll({ 
+app.get('/shipping-info', isAuthenticated, isUserBanned, async (req, res) => {
+    const userId = req.user.userId;
+
+    try {
+
+        const userShippingInfo = await Shipping.findAll({
             where: {
                 userId: userId
             }
@@ -451,9 +451,9 @@ app.get('/shipping-info', isAuthenticated, isUserBanned, async(req, res) => {
 
         res.json(userShippingInfo)
 
-     } catch (error) {
+    } catch (error) {
         res.status(500).json(`Internal Server Error: ${error}`)
-     }
+    }
 });
 
 
@@ -463,18 +463,18 @@ app.get('/shipping-info', isAuthenticated, isUserBanned, async(req, res) => {
 
 //ruta para generar secret key. Se puede utilizar codigo para agregar manualmente en caso de no poder escanear QR.
 app.get('/generate-secret', isAuthenticated, isAdmin, async (req, res) => {
-    const userId = req.user.userId; 
-    
+    const userId = req.user.userId;
+
     try {
-        
-        const user = await User.findOne({where: {id: userId}});
-        if (user.otp_secret) {return res.status(400).json('Ya has creado tu secreto anteriormente.')};
+
+        const user = await User.findOne({ where: { id: userId } });
+        if (user.otp_secret) { return res.status(400).json('Ya has creado tu secreto anteriormente.') };
 
         const secret = speakeasy.generateSecret();
 
-        await user.update({otp_secret: secret.base32});
+        await user.update({ otp_secret: secret.base32 });
 
-        res.json({secret: secret.base32});
+        res.json({ secret: secret.base32 });
 
     } catch (error) {
         res.status(500).json(`Internal Server Error: ${error.message}`);
@@ -484,9 +484,9 @@ app.get('/generate-secret', isAuthenticated, isAdmin, async (req, res) => {
 //generar codigo QR para agregarlo a la app.
 app.post('/generate-qr-code', isAuthenticated, (req, res) => {
     const secret = req.body.secret;
-    if (!secret) {return res.status(400).json('Faltan datos')};
+    if (!secret) { return res.status(400).json('Faltan datos') };
 
-    const otpAuthUrl = speakeasy.otpauthURL({secret, label: 'MyApp'});
+    const otpAuthUrl = speakeasy.otpauthURL({ secret, label: 'MyApp' });
     QRCode.toDataURL(otpAuthUrl, (error, imageUrl) => {
         if (error) {
             res.status(500).send('Error generating QR code');
@@ -497,12 +497,12 @@ app.post('/generate-qr-code', isAuthenticated, (req, res) => {
 });
 
 //ruta para que usuarios admin puedan activar 2FA.
-app.put('/2fa/activate', isAuthenticated, isAdmin, async(req, res) => {
+app.put('/2fa/activate', isAuthenticated, isAdmin, async (req, res) => {
     const userId = req.user.userId;
 
     try {
         const user = await User.findByPk(userId);
-        if (!user) {return res.status(404).json('No existe usuario')}; // el usuario deberia existir siempre.
+        if (!user) { return res.status(404).json('No existe usuario') }; // el usuario deberia existir siempre.
         if (user && user.two_factor_authentication) {
             return res.status(400).json('Ya tienes 2FA activado')
         } else {
@@ -519,14 +519,14 @@ app.put('/2fa/activate', isAuthenticated, isAdmin, async(req, res) => {
 
 
 function isAuthenticated(req, res, next) {
-    const token = req.headers.authorization && req.headers.authorization.split(' ')[1]; // extrae el token de los headers.
+    const token = req.headers.authorization && req.headers.authorization.split(' ')[ 1 ]; // extrae el token de los headers.
     if (!token) {
         return res.status(401).json({ message: 'No token provided.' });
     }
 
-  //  if (isTokenBanned(token)) {
-  //      return res.status(403).json({ message: 'Token has been banned' });
-  //  }
+    //  if (isTokenBanned(token)) {
+    //      return res.status(403).json({ message: 'Token has been banned' });
+    //  }
 
     jwt.verify(token, 'access-secret', (error, decoded) => {
         if (error) {
@@ -557,7 +557,7 @@ async function isAdmin(req, res, next) {
 function generateToken() {
     return crypto.randomBytes(20).toString('hex');
     const expirationDate = Date.now() + (10 * 60 * 1000);
-    return {token, expirationDate}
+    return { token, expirationDate }
 };
 
 // ESTO NO TIENE EFECTO EN USUARIOS DE GOOGLE.
@@ -638,13 +638,13 @@ app.post('/reset-password', isAuthenticated, isUserBanned, async (req, res) => {
 
 
 
-app.put('/users/grant-admin/:id', isAuthenticated, async(req, res) => { // debe utilizar isAdmin luego de que exista el primer admin.
+app.put('/users/grant-admin/:id', isAuthenticated, async (req, res) => { // debe utilizar isAdmin luego de que exista el primer admin.
     const id = req.params.id;
     if (!id) {
         return res.status(400).json('Must provide an id');
     };
 
-    if (req.user.is_admin) {return res.json('User is already an admin')}; // <- this line never triggers.
+    if (req.user.is_admin) { return res.json('User is already an admin') }; // <- this line never triggers.
 
     try {
         const user = await User.findByPk(id);
@@ -662,15 +662,15 @@ app.put('/users/grant-admin/:id', isAuthenticated, async(req, res) => { // debe 
 });
 
 // ruta para que un admin pueda ver todos los datos de un usuario especifico
-app.get('/users/info/details/:username', isAuthenticated, isAdmin, async(req, res) => {
+app.get('/users/info/details/:username', isAuthenticated, isAdmin, async (req, res) => {
     const username = req.params.username;
-    if (!username) {return res.status(400).json('Debe incluir el nombre de usuario a buscar.')};
+    if (!username) { return res.status(400).json('Debe incluir el nombre de usuario a buscar.') };
 
     try {
         const userDetails = await User.findOne({
-            where: {username: username}
-        }); 
-        if (!username) {return res.status(404).json(`Usuario: ${username} no encontrado`)};
+            where: { username: username }
+        });
+        if (!username) { return res.status(404).json(`Usuario: ${username} no encontrado`) };
 
         res.json(userDetails)
 
@@ -679,31 +679,31 @@ app.get('/users/info/details/:username', isAuthenticated, isAdmin, async(req, re
     }
 });
 
-app.get('/user-details/:id', isAuthenticated, isAdmin, async(req, res) => {
+app.get('/user-details/:id', isAuthenticated, isAdmin, async (req, res) => {
     const id = req.params.id;
     if (!id) {
-        return res.status(400).json({error: 'Falta id', idNotProvided: true});
+        return res.status(400).json({ error: 'Falta id', idNotProvided: true });
     };
 
     try {
-        
+
         const userDetails = await User.findByPk(id);
         if (!userDetails) {
-            return res.status(404).json({error: `Usuario con id: ${id} no existe`, userNotFound: true});
+            return res.status(404).json({ error: `Usuario con id: ${id} no existe`, userNotFound: true });
         };
 
         res.json(userDetails)
 
     } catch (error) {
-        res.status(500).json({error: 'Internal Server Error', error});
+        res.status(500).json({ error: 'Internal Server Error', error });
     }
 
 });
 
 
 async function isTokenBanned(token) {
-    const bannedToken = await BannedToken.findOne({where: {token: token}});
-   return bannedToken ? true: false
+    const bannedToken = await BannedToken.findOne({ where: { token: token } });
+    return bannedToken ? true : false
 };
 
 //middleware to check against banned tokens before giving a new one.
@@ -744,7 +744,7 @@ app.post('/access-token', async (req, res) => {
     }
 
     if (await isTokenBanned(refreshToken)) {
-        const bannedTokens = await BannedToken.findAll(); 
+        const bannedTokens = await BannedToken.findAll();
 
         jwt.verify(refreshToken, 'refresh-secret', async (error, decoded) => {
             if (error) {
@@ -756,7 +756,7 @@ app.post('/access-token', async (req, res) => {
             // Generar nuevo token hasta entregar uno no baneado.
             do {
                 accessToken = jwt.sign({ userId: decoded.userId, username: decoded.username }, 'access-secret', { expiresIn: '50m' });
-            } while (bannedTokens.some((token) => token.token === accessToken));            
+            } while (bannedTokens.some((token) => token.token === accessToken));
 
             // luego de entregarlo, banearlo
             // EL token que sera baneado no debe estar ya incluido en la base de datos, para evitar duplicate entry error.
@@ -792,16 +792,16 @@ app.post('/access-token', async (req, res) => {
 
             console.log('New Access Token:', accessToken); // Debugging 
 
-            
+
             BannedToken.create({ token: accessToken })
                 .then(() => {
-                    
+
                     res.json({ accessToken });
                 })
                 .catch((error) => {
                     console.error('Error adding access token to banned tokens:', error);
                     res.status(500).json({ message: 'Internal server error' });
-                }); 
+                });
         });
     }
 });
@@ -834,11 +834,11 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
     const password = req.body.password;
 
     try {
-        
+
         //revisar el blacklist DeletedUser
-        const blackListedUsername = await DeletedUser.findOne({where: {username}});
+        const blackListedUsername = await DeletedUser.findOne({ where: { username } });
         if (blackListedUsername) {
-            return res.status(403).json({message: 'Error, Tu cuenta ha sido eliminada.', userHasBeenDeleted: true});
+            return res.status(403).json({ message: 'Error, Tu cuenta ha sido eliminada.', userHasBeenDeleted: true });
         };
 
         const user = await User.findOne({ where: { username } });
@@ -852,7 +852,7 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
         }
 
         // Generate new tokens
-        const accessToken = jwt.sign({ userId: user.id, username: user.username }, 'access-secret', { expiresIn: '50m' }); 
+        const accessToken = jwt.sign({ userId: user.id, username: user.username }, 'access-secret', { expiresIn: '50m' });
         const refreshToken = jwt.sign({ userId: user.id, username: user.username }, 'refresh-secret', { expiresIn: '15d' });
 
         res.json({ message: 'Login successful', accessToken, refreshToken });
@@ -862,8 +862,8 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
 });
 
 //LOGOUT ROUTE. Falta arreglar
-app.post('/logout', isAuthenticated, async(req, res) => {
-    const accessToken = req.headers.authorization && req.headers.authorization.split(' ')[1]; // Extract access token
+app.post('/logout', isAuthenticated, async (req, res) => {
+    const accessToken = req.headers.authorization && req.headers.authorization.split(' ')[ 1 ]; // Extract access token
     const refreshToken = req.body.refreshToken;
 
     console.log(`Access Token: ${accessToken}`);
@@ -873,18 +873,18 @@ app.post('/logout', isAuthenticated, async(req, res) => {
         if (!refreshToken) {
             return res.status(400).json('Debe incluir refresh token');
         }
-      
-       
+
+
         jwt.verify(refreshToken, 'refresh-secret', async (error, decoded) => {
             if (error) {
                 return res.status(401).json({ message: 'Invalid refresh token.' });
             }
-            
-          
+
+
             await BannedToken.create({ token: accessToken });
             await BannedToken.create({ token: refreshToken });
 
-         
+
             res.json({ logOutSuccessful: true, message: 'Logout successful' });
         });
     } catch (error) {
@@ -894,41 +894,48 @@ app.post('/logout', isAuthenticated, async(req, res) => {
 
 // ruta actualizada: incluye email e email de bienvenida enviado automaticamente, tambien regex para confirmar email.
 // username and email must both be unique
-app.post('/signup', async(req, res) => {
+app.post('/signup', async (req, res) => {
 
-    const {firstName, lastName, username, confirmUsername, email, confirmEmail, password, confirmPassword} = req.body;
+    const { firstName, lastName, username, confirmUsername, email, confirmEmail, password, confirmPassword } = req.body;
 
     if (!firstName || !lastName || !username || !confirmUsername || !email || !confirmEmail || !password || !confirmPassword) {
         return res.status(400).json('Missing data');
     };
 
     const emailRegex = /^[\w-]+(?:\.[\w-]+)*@(?:[\w-]+\.)+[a-zA-Z]{2,7}$/;
-        if (!email || !email.match(emailRegex)) {
+    if (!email || !email.match(emailRegex)) {
         return res.status(400).json(`Formato de email incorrecto`);
-        };
+    };
 
 
     try {
         // revisar contra el blacklist de DeletedUser.
 
-        const blackListedUsername = await DeletedUser.findOne({where: {username}});
-        const blackListedEmail = await DeletedUser.findOne({where: {email}});
+        const blackListedUsername = await DeletedUser.findOne({ where: { username } });
+        const blackListedEmail = await DeletedUser.findOne({ where: { email } });
         if (blackListedUsername || blackListedEmail) {
-            return res.status(403).json({forbiddenMessage: 'Tu cuenta ya ha sido eliminada'});
+            return res.status(403).json({ forbiddenMessage: 'Tu cuenta ya ha sido eliminada' });
         };
 
-        const checkUserExists = await User.findOne({where: {username: username}});
+        const checkUserExists = await User.findOne({ where: { username: username } });
         if (checkUserExists) {
             return res.status(400).json({
-                message: `Username ${username} already exists`,
+                message: `Username: ${username} already exists`,
                 usernameAlreadyExists: true
             });
         }
-       
-        
+        const checkEmailExists = await User.findOne({ where: { email: email } });
+        if (checkEmailExists) {
+            return res.status(400).json({
+                message: `Email: ${email} already have an account`,
+                emailAlreadyExists: true
+            });
+        }
+
+
         if (username === confirmUsername && email === confirmEmail && password === confirmPassword) {
             const hashedPassword = await bcrypt.hash(password, 10)
-            const newUser = await User.create({first_name: firstName, last_name: lastName, username, email, password: hashedPassword});
+            const newUser = await User.create({ first_name: firstName, last_name: lastName, username, email, password: hashedPassword });
 
             // SEND WELCOME EMAIL HERE.
             const transporter = await initializeTransporter();
@@ -937,7 +944,7 @@ app.post('/signup', async(req, res) => {
             return res.status(201).json(`Username: ${newUser.username} created successfully`);
 
         } else {
-            res.status(400).json({message: 'fields must match'})
+            res.status(400).json({ message: 'fields must match' })
         }
     } catch (error) {
         res.status(500).json(`Internal Server Error: ${error.message}`);
@@ -945,17 +952,19 @@ app.post('/signup', async(req, res) => {
 });
 
 // PROFILE:
-app.get('/profile-info', isAuthenticated, isUserBanned, async(req, res) => {
+app.get('/profile-info', isAuthenticated, isUserBanned, async (req, res) => {
     const userId = req.user.userId;
     try {
         const userProfileData = await User.findOne({
             where: {
                 id: userId
             },
-            attributes: { exclude: ['password', 'otp_secret', 'password_reset_token', 'password_reset_token_expires', 'id', 'google_id'] },
+            attributes: { exclude: [ 'password', 'otp_secret', 'password_reset_token', 'password_reset_token_expires', 'id', 'google_id' ] },
             include: [
-                {model: Shipping,
-                attributes: {exclude: ['id', 'userId', 'createdAt', 'updatedAt']}}
+                {
+                    model: Shipping,
+                    attributes: { exclude: [ 'id', 'userId', 'createdAt', 'updatedAt' ] }
+                }
             ]
         });
         // aqui no se envian ciertos valores por motivos de seguridad.
@@ -1015,7 +1024,7 @@ app.post('/review', isAuthenticated, isUserBanned, async (req, res) => {
             }
         });
 
-        if (!purchaseRecord) {return res.status(400).json(`Debes comprar el producto con id: ${productId} antes de poder dejar una review.`)};
+        if (!purchaseRecord) { return res.status(400).json(`Debes comprar el producto con id: ${productId} antes de poder dejar una review.`) };
 
         const createdReview = await Review.create({ productId, userId, review, rating });
         res.status(201).json({ message: 'Review creada con éxito', review: createdReview });
@@ -1029,7 +1038,7 @@ app.delete('/review/:reviewId', isAuthenticated, isUserBanned, async (req, res) 
     const userId = req.user.userId;
     const reviewId = req.params.reviewId; // <-- deja la reviewId y esa review sera eliminada (si es que tu usuario la ha escrito).
 
-    if (reviewId) {return res.status(400).json('Debe incluir reviewId')}
+    if (reviewId) { return res.status(400).json('Debe incluir reviewId') }
 
     try {
         const reviewToDelete = await Review.findOne({ where: { id: reviewId, userId } });
@@ -1059,55 +1068,55 @@ app.get('/user/reviews', isAuthenticated, isUserBanned, async (req, res) => {
                     where: { userId },
                     include: {
                         model: User,
-                        attributes: ['id', 'username']
+                        attributes: [ 'id', 'username' ]
                     }
                 }
             ]
         });
-       // console.log('Products with Reviews:', productsWithReviews); 
+        // console.log('Products with Reviews:', productsWithReviews); 
 
         res.json({ resultado: productsWithReviews.length, productsWithReviews });
     } catch (error) {
-        console.error('Error fetching products with reviews:', error); 
+        console.error('Error fetching products with reviews:', error);
         res.status(500).json(`Internal Server Error: ${error}`);
     }
 });
 
 
 // debugging route. <-- works.
-app.get('/reviews', async(req, res) => {
+app.get('/reviews', async (req, res) => {
     try {
         const reviews = await Product.findAll({
             include: [
                 { model: Review, include: User }
             ]
         });
-        res.json({resultado: reviews.length, reviews});
+        res.json({ resultado: reviews.length, reviews });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
 // debugging route to get the right amount of reviews per user id.
-app.get('/my-reviews', isAuthenticated, isUserBanned, async(req, res) => {
+app.get('/my-reviews', isAuthenticated, isUserBanned, async (req, res) => {
     const userId = req.user.userId;
     console.log(`user id: ${userId}`);
 
     try {
         const allReviews = await Review.findAll({
-            where: {userId: userId},
-            attributes: {exclude: ['userId']} // <-- usuario no pueden ver su ID. 
+            where: { userId: userId },
+            attributes: { exclude: [ 'userId' ] } // <-- usuario no pueden ver su ID. 
         });
-        if (allReviews.length === 0) {return res.status(404).json('No reviews available')};
-        res.json({reviewCount: allReviews.length ,allReviews})
+        if (allReviews.length === 0) { return res.status(404).json('No reviews available') };
+        res.json({ reviewCount: allReviews.length, allReviews })
     } catch (error) {
         res.status(500).json(`Internal Server Error: ${error.message}`)
     }
 });
 
 //ruta para crear brands.
-app.post('/brand', isAuthenticated, isAdmin, async(req, res) => {
-    const brandName = req.body.brandName; 
+app.post('/brand', isAuthenticated, isAdmin, async (req, res) => {
+    const brandName = req.body.brandName;
     if (!brandName) { return res.status(400).json('Missing brand name'); }
     if (brandName.length > 50) { return res.status(400).json(`Brand name is too long: ${brandName}`); }
 
@@ -1116,7 +1125,7 @@ app.post('/brand', isAuthenticated, isAdmin, async(req, res) => {
         if (existingBrand) {
             return res.status(400).json(`Brand: ${brandName} already exists`);
         } else {
-            await Brand.create({ brand: brandName }); 
+            await Brand.create({ brand: brandName });
             return res.status(201).json(`Brand: ${brandName} created successfully`);
         }
     } catch (error) {
@@ -1125,10 +1134,10 @@ app.post('/brand', isAuthenticated, isAdmin, async(req, res) => {
 });
 
 // ver todas las marcas disponibles
-app.get('/allbrands', async(req, res) => {
+app.get('/allbrands', async (req, res) => {
     try {
         const allBrands = await Brand.findAll();
-        if (allBrands.length === 0) {return res.status(404).json('There are no brands.')}
+        if (allBrands.length === 0) { return res.status(404).json('There are no brands.') }
         res.json(allBrands)
     } catch (error) {
         res.status(500).json(`Internal Server Error: ${error}`)
@@ -1136,13 +1145,13 @@ app.get('/allbrands', async(req, res) => {
 });
 
 // buscar marca por id
-app.get('/brand/:id', async(req, res) => {
-    const {id} = req.params;
-    if (!id) {return res.status(400).json('Missing brand id')};
+app.get('/brand/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!id) { return res.status(400).json('Missing brand id') };
 
     try {
-        const item = await Product.findAll({where: {brandId: id}})
-        if (item.length === 0) {return res.status(404).json(`No se encontraron productos con brand id: ${id}`)} 
+        const item = await Product.findAll({ where: { brandId: id } })
+        if (item.length === 0) { return res.status(404).json(`No se encontraron productos con brand id: ${id}`) }
         res.json(item)
     } catch (error) {
         res.json(error)
@@ -1157,7 +1166,7 @@ app.get('/product/:brand', async (req, res) => {
     }
     try {
         const products = await Brand.findAll({
-            where: {brand: brandName},
+            where: { brand: brandName },
         });
         if (products.length === 0) {
             return res.status(404).json(`No hay productos con la marca: ${brandName}`);
@@ -1172,16 +1181,16 @@ app.get('/product/:brand', async (req, res) => {
 //crear producto, una vez agregado TODOS los usuarios reciben un email.
 app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
     try {
-        const { 
+        const {
             brandId,
-            product, 
-            stock, 
-            price, 
-            description, 
-            tags, 
-            attributes, 
-            salePrice, 
-            featured, 
+            product,
+            stock,
+            price,
+            description,
+            tags,
+            attributes,
+            salePrice,
+            featured,
             // IMAGE    <-- 
             image, // added
             categoryNames
@@ -1193,16 +1202,16 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
 
         // revisar si el producto ya existe
         const checkProductExists = await Product.findOne({
-            where: {product: product}
+            where: { product: product }
         });
-        if (checkProductExists) {return res.status(400).json(`El producto con nombre: ${product} ya existe`)};
+        if (checkProductExists) { return res.status(400).json(`El producto con nombre: ${product} ya existe`) };
 
         // Create the product with the provided attributes and userId
         const createdProduct = await Product.create({
             brandId,
             product,
             stock,
-            price, 
+            price,
             description,
             tags,
             attributes,
@@ -1233,12 +1242,12 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
         for (const user of users) {
             if (user.email) {
                 const userEmail = user.email;
-                await sendMail(transporter, userEmail, 
-                `Hemos agregado un nuevo producto`, `Que tal? te escribimos porque hemos agregado un nuevo producto a la 
+                await sendMail(transporter, userEmail,
+                    `Hemos agregado un nuevo producto`, `Que tal? te escribimos porque hemos agregado un nuevo producto a la 
                 tienda, ya disponible para adquirir ! ${createdProduct.product}`);
             }
         }
-        
+
 
         res.status(201).json({ message: `Product added successfully`, product: createdProduct });
     } catch (error) {
@@ -1247,7 +1256,7 @@ app.post('/product', isAuthenticated, isAdmin, async (req, res) => {
 });
 
 // ACTUALIZAR PRODUCTO EXISTENTE. Hasta ahora funciona.
-app.put('/update-product/:productId', isAuthenticated, isAdmin, async(req, res) => {
+app.put('/update-product/:productId', isAuthenticated, isAdmin, async (req, res) => {
     const userId = req.user.userId;
     const productId = req.params.productId;
     const {
@@ -1264,7 +1273,7 @@ app.put('/update-product/:productId', isAuthenticated, isAdmin, async(req, res) 
     } = req.body;
 
     try {
-        const existingProduct = await Product.findOne({where: {id: productId}}) // o findByPk.
+        const existingProduct = await Product.findOne({ where: { id: productId } }) // o findByPk.
         if (!existingProduct) {
             return res.status(404).json({ message: `Product with ID ${productId} not found` });
         }
@@ -1276,7 +1285,7 @@ app.put('/update-product/:productId', isAuthenticated, isAdmin, async(req, res) 
             stock: stock || existingProduct.stock,
             price: price || existingProduct.price,
             description: description || existingProduct.description,
-           // brand: brand || existingProduct.brand,
+            // brand: brand || existingProduct.brand,
             tags: tags || existingProduct.tags,
             attributes: attributes || existingProduct.attributes,
             featured: featured || existingProduct.featured
@@ -1284,7 +1293,7 @@ app.put('/update-product/:productId', isAuthenticated, isAdmin, async(req, res) 
 
         // en caso de ingresar categorias. 
         if (categoryNames && categoryNames.length > 0) {
-            const categories = await Promise.all(categoryNames.map(async(categoryData) => {
+            const categories = await Promise.all(categoryNames.map(async (categoryData) => {
                 let category = await Category.findOne({ where: { category: categoryData.name } });
                 if (!category) {
                     category = await Category.create({ category: categoryData.name, description: categoryData.description });
@@ -1338,17 +1347,17 @@ app.get('/product-detail/:id', async (req, res) => {
 
 
 //ruta para que usuarios puedan reportar un producto. (por id). Un usuario puede reportar un producto una sola vez.
-app.post('/products/report/id', isAuthenticated, isUserBanned, async(req, res) => {
+app.post('/products/report/id', isAuthenticated, isUserBanned, async (req, res) => {
     const userId = req.user.userId;
     const productId = req.body.productId;
-    if (!productId) {return res.status(400).json('Debe uncluir el id del producto')};
+    if (!productId) { return res.status(400).json('Debe uncluir el id del producto') };
 
     console.log(`User id: ${userId}`);
-    
+
     try {
         // first check if product exists.
         const existingProduct = await Product.findByPk(productId);
-        if (!existingProduct) {return res.status(404).json(`No existe el producto con id: ${productId}`)};
+        if (!existingProduct) { return res.status(404).json(`No existe el producto con id: ${productId}`) };
 
         const existingReport = await ReportedProduct.findOne({
             where: {
@@ -1356,10 +1365,10 @@ app.post('/products/report/id', isAuthenticated, isUserBanned, async(req, res) =
                 userId: userId
             }
         });
-        if (existingReport) {return res.status(400).json(`Ya has reportado este producto. con id: ${productId}`)};
+        if (existingReport) { return res.status(400).json(`Ya has reportado este producto. con id: ${productId}`) };
 
         const newReport = await ReportedProduct.create({
-            productId, 
+            productId,
             userId
         });
 
@@ -1371,18 +1380,18 @@ app.post('/products/report/id', isAuthenticated, isUserBanned, async(req, res) =
 });
 
 //ruta para que usuarios puedan reportar un producto. (por nombre)
-app.post('/products/report/name', isAuthenticated, isUserBanned, async(req, res) => {
+app.post('/products/report/name', isAuthenticated, isUserBanned, async (req, res) => {
     const userId = req.user.userId;
     const productName = req.body.productName;
-    if (!productName) {return res.status(400).json('Debe incluir el nombre del producto')};
+    if (!productName) { return res.status(400).json('Debe incluir el nombre del producto') };
 
     console.log(`User id: ${userId}`);
 
     try {
         const existingProduct = await Product.findOne({
-            where: {product: productName}
+            where: { product: productName }
         });
-        if (!existingProduct) {return res.status(404).json({message: `Producto ${productName} no existe`, productNotExists: true})};
+        if (!existingProduct) { return res.status(404).json({ message: `Producto ${productName} no existe`, productNotExists: true }) };
 
         const existingReport = await ReportedProduct.findOne({
             where: {
@@ -1390,7 +1399,7 @@ app.post('/products/report/name', isAuthenticated, isUserBanned, async(req, res)
                 userId: userId
             }
         });
-        if (existingReport) {return res.status(400).json(`Ya has reportado este producto con nombre: ${productName}`)};
+        if (existingReport) { return res.status(400).json(`Ya has reportado este producto con nombre: ${productName}`) };
 
         const newReport = await ReportedProduct.create({
             productId: existingProduct.id,
@@ -1410,14 +1419,16 @@ app.get('/allproducts', async (req, res) => {
             include: [
                 { model: Category },
                 { model: Brand },
-                { model: Review,
-                include: {
-                    model: User,
-                    attributes: ['username'] // <-- para ver quien escribio la review de cada producto
-                } } 
+                {
+                    model: Review,
+                    include: {
+                        model: User,
+                        attributes: [ 'username' ] // <-- para ver quien escribio la review de cada producto
+                    }
+                }
             ]
         });
-        
+
 
         if (allProducts.length > 0) {
             res.json(allProducts);
@@ -1430,32 +1441,45 @@ app.get('/allproducts', async (req, res) => {
 });
 
 // FILTRAR POR CATEGORIA.
-app.get('/category/:name', async(req, res) => {
+app.get('/category/:name', async (req, res) => {
     const name = req.params.name;
-    if (!name || name.length > 90) {return res.status(400).json('Introduzca una categoria valida')};
+    if (!name || name.length > 90) { return res.status(400).json('Introduzca una categoria valida') };
 
     try {
         const products = await Category.findAll({
             include: Product,
-            where: {category: name}
+            where: { category: name }
         });
-        if (products.length === 0) {return res.status(404).json(`No existe categoria: ${name}`)};
+        if (products.length === 0) { return res.status(404).json(`No existe categoria: ${name}`) };
         res.json(products)
     } catch (error) {
         res.status(500).json(`Internal Server Error: ${error}`)
     }
 });
 
+app.get('/category', async (req, res) => {
+    // const name = req.params.name;
+    // if (!name || name.length > 90) {return res.status(400).json('Introduzca una categoria valida')};
 
-app.get('/searchproduct/:productname', async(req, res) => {
+    try {
+        const products = await Category.findAll({
+            include: Product,
+        });
+        res.json(products)
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`)
+    }
+});
+
+app.get('/searchproduct/:productname', async (req, res) => {
     const productname = req.params.productname;
-    if (!productname) {return res.status(400).json('Missing product name')};
-    if (productname.length > 50) {return res.status(400).json('Product name is too long')};
+    if (!productname) { return res.status(400).json('Missing product name') };
+    if (productname.length > 50) { return res.status(400).json('Product name is too long') };
 
     try {
         const products = await Product.findAll({
             where: { product: productname },
-            include: [Category] // Include associated categories
+            include: [ Category ] // Include associated categories
         });
 
         if (products && products.length > 0) {
@@ -1472,7 +1496,7 @@ app.get('/searchproduct/:productname', async(req, res) => {
 app.get('/allusers', isAuthenticated, isAdmin, async (req, res) => {
     try {
         const allUsers = await User.findAll({
-      //     include: Order
+            //     include: Order
         });
         if (allUsers && allUsers.length > 0) {
             return res.json({ message: 'All users:', users: allUsers });
@@ -1487,24 +1511,24 @@ app.get('/allusers', isAuthenticated, isAdmin, async (req, res) => {
 
 
 // admin puede eliminar usuario por su id.
-app.delete('/deleteuser/id/:id', isAuthenticated, isAdmin, async(req, res) => {
+app.delete('/deleteuser/id/:id', isAuthenticated, isAdmin, async (req, res) => {
     const id = req.params.id;
     if (!id) {
         return res.status(400).json('Falta id');
     }
 
     try {
-        const userToDelete = await User.findByPk(id);
+        const userToDelete = await User.findByPk(id );
         if (!userToDelete) {
             return res.status(404).json({
                 message: `No user with ID: ${id} was found.`,
                 noUserIdFound: true
             });
-            
+
         } else {
 
-            await Order.destroy({where: {userId: userToDelete.id}});
-            await PaymentHistory.destroy({where: {userId: userToDelete.id}});
+            await Order.destroy({ where: { userId: userToDelete.id } });
+            await PaymentHistory.destroy({ where: { userId: userToDelete.id } });
             // estas 2 deletions arreglaron el error a la hora de eliminar un usuario con records/
             // en las tablas PaymentHistory y Order.
 
@@ -1512,18 +1536,19 @@ app.delete('/deleteuser/id/:id', isAuthenticated, isAdmin, async(req, res) => {
             const userEmailToBan = userToDelete.email;
             const userUsernameToBan = userToDelete.username;
             // agregarlos a DeletedUser.
-            await DeletedUser.create({userId: userToDelete, username: userUsernameToBan, email: userEmailToBan});
+            await DeletedUser.create({ userId: userToDelete, username: userUsernameToBan, email: userEmailToBan });
 
             await userToDelete.destroy();
-            
+
             //AGREGAR EMAIL
             const transporter = await initializeTransporter();
-            await sendMail(transporter, userToDelete.email, 'Tu cuenta ha sido eliminada', 
-            'Te escribimos para informarte que debido a no hbaer seguido nuestras reglas, hemos tenido que dar tu cuenta de baja');
+            await sendMail(transporter, userToDelete.email, 'Tu cuenta ha sido eliminada',
+                'Te escribimos para informarte que debido a no hbaer seguido nuestras reglas, hemos tenido que dar tu cuenta de baja');
 
             return res.status(201).json(`Usuario con ID: ${id} eliminado con exito`);
         }
     } catch (error) {
+        console.log(error);
         res.status(500).json(`Internal Server Error: ${error}`);
     }
 });
@@ -1531,7 +1556,7 @@ app.delete('/deleteuser/id/:id', isAuthenticated, isAdmin, async(req, res) => {
 // cuando un usuario es eliminado, deberian recibir un email incluyendo la razon de su eliminacion.
 
 // admin puede eliminar usuario por su username (unico)
-app.delete('/deleteuser/:username', isAuthenticated, isAdmin, async(req, res) => { // testeada y FUNCIONA.
+app.delete('/deleteuser/:username', isAuthenticated, isAdmin, async (req, res) => { // testeada y FUNCIONA.
     const username = req.params.username;
     if (!username) {
         return res.status(400).json('Debe incluir un nombre de usuario');
@@ -1545,13 +1570,13 @@ app.delete('/deleteuser/:username', isAuthenticated, isAdmin, async(req, res) =>
         const userToDelete = await User.findOne({ where: { username } });
         if (!userToDelete) {
             return res.status(404).json(`No se ha encontrado el usuario: ${username}`);
-            
+
         } else {
-            
-           
+
+
             // debugging
-            await Order.destroy({where: {userId: userToDelete.id}});
-            await PaymentHistory.destroy({where: {userId: userToDelete.id}});
+            await Order.destroy({ where: { userId: userToDelete.id } });
+            await PaymentHistory.destroy({ where: { userId: userToDelete.id } });
             // estas 2 deletions arreglaron el error a la hora de eliminar un usuario con records/
             // en las tablas PaymentHistory y Order.
 
@@ -1559,15 +1584,15 @@ app.delete('/deleteuser/:username', isAuthenticated, isAdmin, async(req, res) =>
             const userIdToBan = userToDelete.id;
             const userEmailToBan = userToDelete.email;
 
-            await DeletedUser.create({userId: userIdToBan, username, email: userEmailToBan});
+            await DeletedUser.create({ userId: userIdToBan, username, email: userEmailToBan });
 
             await userToDelete.destroy();
 
             // AGREGAR EMAIL
 
             const transporter = await initializeTransporter();
-            await sendMail(transporter, userToDelete.email, 'Tu cuenta ha sido eliminada', 
-            'Te escribimos para informarte que debido a no hbaer seguido nuestras reglas, hemos tenido que dar tu cuenta de baja');
+            await sendMail(transporter, userToDelete.email, 'Tu cuenta ha sido eliminada',
+                'Te escribimos para informarte que debido a no hbaer seguido nuestras reglas, hemos tenido que dar tu cuenta de baja');
 
             return res.status(201).json(`Usuario: ${username} eliminado con exito`);
         }
@@ -1579,38 +1604,38 @@ app.delete('/deleteuser/:username', isAuthenticated, isAdmin, async(req, res) =>
 
 
 // admin puede eliminar usuario por su email (unico)
-app.delete('/deleteuser/email/:email', isAuthenticated, isAdmin, async(req, res) => {
+app.delete('/deleteuser/email/:email', isAuthenticated, isAdmin, async (req, res) => {
     const email = req.params.email;
-    if (!email) {return res.status(400).json('Debe incluir email de usuario a eliminar')};
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;  
-    if (!emailRegex.test(email)) {return res.status(400).json('Email invalido.')};
+    if (!email) { return res.status(400).json('Debe incluir email de usuario a eliminar') };
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) { return res.status(400).json('Email invalido.') };
 
     try {
         const userToDelete = await User.findOne({
-            where: {email}
+            where: { email }
         });
         if (userToDelete) {
 
-            await Order.destroy({where: {userId: userToDelete.id}});
-            await PaymentHistory.destroy({where: {userId: userToDelete.id}});
+            await Order.destroy({ where: { userId: userToDelete.id } });
+            await PaymentHistory.destroy({ where: { userId: userToDelete.id } });
             // estas 2 deletions arreglaron el error a la hora de eliminar un usuario con records/
             // en las tablas PaymentHistory y Order.
 
             // user id
-            const userIdToBan = userToDelete.id; 
+            const userIdToBan = userToDelete.id;
             const userUsernameToBan = userToDelete.username;
 
             // si el usuario se encuntra entonces agregarlo a DeletedUser.
-            await DeletedUser.create({userId: userIdToBan, username: userUsernameToBan, email});
+            await DeletedUser.create({ userId: userIdToBan, username: userUsernameToBan, email });
 
             await User.destroy({
-                where: {email}
+                where: { email }
             });
 
             //SEND EMAIL.
             const transporter = await initializeTransporter();
-            await sendMail(transporter, email, 'Tu cuenta ha sido eliminada', 
-            'Te escribimos para informarte que debido a no haber seguido nuestras reglas, tu cuenta ha sido eliminada.');
+            await sendMail(transporter, email, 'Tu cuenta ha sido eliminada',
+                'Te escribimos para informarte que debido a no haber seguido nuestras reglas, tu cuenta ha sido eliminada.');
 
             return res.status(201).json(`Usuario con email: ${email} eliminado con exito`);
         } else {
@@ -1624,7 +1649,7 @@ app.delete('/deleteuser/email/:email', isAuthenticated, isAdmin, async(req, res)
 // ruta para que un usuario puede eliminar SU PROPIA CUENTA.    
 app.delete('/delete/user', isAuthenticated, isUserBanned, async (req, res) => {
     const userId = req.user.userId;
-// esta no necesita ser baneada ya que el usuario no ha roto las reglas, simplemente ha decidido dejar el sitio de manera permanente.
+    // esta no necesita ser baneada ya que el usuario no ha roto las reglas, simplemente ha decidido dejar el sitio de manera permanente.
     try {
         await User.destroy({
             where: {
@@ -1639,11 +1664,11 @@ app.delete('/delete/user', isAuthenticated, isUserBanned, async (req, res) => {
 
 
 // ruta para productos en orden alfabetico
-app.get('/products/alphorder', async(req, res) => {
+app.get('/products/alphorder', async (req, res) => {
     try {
         const allProducts = await Product.findAll({
             order: [
-                ['product', 'ASC']
+                [ 'product', 'ASC' ]
             ]
         });
 
@@ -1668,7 +1693,7 @@ app.get('/search/product/:name', async (req, res) => {
 
     try {
         const products = await Product.findAll({
-            include: [Category, Brand, Review], // Incluye todos los modelos.
+            include: [ Category, Brand, Review ], // Incluye todos los modelos.
             where: {
                 product: name
             }
@@ -1700,7 +1725,7 @@ app.get('/searchbypricebigger/:price', async (req, res) => {
             include: Category, Brand,
             where: {
                 price: {
-                    [Op.gt]: price
+                    [ Op.gt ]: price
                 }
             }
         });
@@ -1730,7 +1755,7 @@ app.get('/searchbypriceless/:price', async (req, res) => {
             include: Category, Brand,
             where: {
                 price: {
-                    [Op.lt]: price
+                    [ Op.lt ]: price
                 }
             }
         });
@@ -1748,11 +1773,11 @@ app.get('/searchbypriceless/:price', async (req, res) => {
 app.get('/searchbyprice/asc', async (req, res) => {
     try {
         const products = await Product.findAll({
-            order: [['price', 'ASC']]
+            order: [ [ 'price', 'ASC' ] ]
         });
 
         if (products.length === 0) {
-            return res.status(404).json({error: 'No se encontraron productos', productNotFound: true});
+            return res.status(404).json({ error: 'No se encontraron productos', productNotFound: true });
         };
 
         res.json({ resultado: products.length, products: products });
@@ -1763,18 +1788,18 @@ app.get('/searchbyprice/asc', async (req, res) => {
 });
 
 // most expensive to cheaper
-app.get('/searchbyprice/desc', async(req, res) => {
+app.get('/searchbyprice/desc', async (req, res) => {
 
     try {
-        
+
         const products = await Product.findAll({
-            order: [['price', 'DESC']]
+            order: [ [ 'price', 'DESC' ] ]
         });
 
         if (products.length === 0) {
-            return res.status(404).json({error: 'No existen productos', productNotFound: true})
+            return res.status(404).json({ error: 'No existen productos', productNotFound: true })
         };
-        
+
         res.json(products);
 
     } catch (error) {
@@ -1784,9 +1809,9 @@ app.get('/searchbyprice/desc', async(req, res) => {
 });
 
 
-app.get('/all-deleted-users', isAuthenticated, isAdmin, async(req, res) => {
+app.get('/all-deleted-users', isAuthenticated, isAdmin, async (req, res) => {
     try {
-        
+
         const allBannedUsers = await DeletedUser.findAll();
 
         if (allBannedUsers.length === 0) {
@@ -1801,7 +1826,7 @@ app.get('/all-deleted-users', isAuthenticated, isAdmin, async(req, res) => {
 
 
 //ruta para buscar por rango de precio entre: y x
-app.get('/searchbypricerange/:start/:end', async(req, res) => {
+app.get('/searchbypricerange/:start/:end', async (req, res) => {
     const start = req.params.start;
     const end = req.params.end;
 
@@ -1810,12 +1835,12 @@ app.get('/searchbypricerange/:start/:end', async(req, res) => {
     }
 
     try {
-      
+
         const products = await Product.findAll({
             include: Category, Brand, // <-- falta: Description, Review.
             where: {
                 price: {
-                    [Op.between]: [start, end]
+                    [ Op.between ]: [ start, end ]
                 }
             }
         });
@@ -1824,7 +1849,7 @@ app.get('/searchbypricerange/:start/:end', async(req, res) => {
             return res.status(404).json(`No se han econtrado productos con el rango de precio: ${start} y ${end}`)
         }
 
-        res.json({resultados: `${products.length}`, products});
+        res.json({ resultados: `${products.length}`, products });
     } catch (error) {
         res.status(500).json({ error: `Internal Server Error: ${error.message}` });
     }
@@ -1842,14 +1867,14 @@ app.delete('/product/:id', isAuthenticated, isAdmin, async (req, res) => {
     }
 
     try {
-       
+
         const product = await Product.findByPk(id);
         if (!product) {
             return res.status(404).json(`No hay producto con id: ${id}`);
         };
 
         // delete Favorite associations.
-        await Favorite.destroy({where: {productId: id}});
+        await Favorite.destroy({ where: { productId: id } });
 
         // revisar si el producto ha sido reportado.
         // si es que lo ha sido, entonces eliminar todos los reportes antes de eliminar el producto.
@@ -1863,7 +1888,7 @@ app.delete('/product/:id', isAuthenticated, isAdmin, async (req, res) => {
             for (const report of reports) {
                 const reportId = report.id;
                 const reportProductId = report.productId;
-        
+
                 await report.destroy();
             }
         }
@@ -1876,12 +1901,12 @@ app.delete('/product/:id', isAuthenticated, isAdmin, async (req, res) => {
 
         const transporter = await initializeTransporter();
 
-       
+
         const users = await User.findAll();
 
-      
+
         for (const user of users) {
-            if (user.email) { 
+            if (user.email) {
                 const userEmail = user.email;
                 await sendMail(transporter, userEmail, 'Producto Eliminado', `El producto "${productName}" ha sido eliminado.`);
             } else {
@@ -1899,31 +1924,31 @@ app.delete('/product/:id', isAuthenticated, isAdmin, async (req, res) => {
 });
 
 // ELIMINAR PRODUCTO POR SU NOMBRE (case sensitive).
-app.delete('/product/delete/name', isAuthenticated, isAdmin, async(req, res) => {
+app.delete('/product/delete/name', isAuthenticated, isAdmin, async (req, res) => {
     const userId = req.user.userId;
     const productName = req.body.productName;
 
     if (!productName) {
         return res.status(400).json('Debe incluir el nombre del producto a eliminar');
-    }    
+    }
 
     try {
         const productToDelete = await Product.findOne({
-            where: {product: productName}
+            where: { product: productName }
         });
-        if (!productToDelete) {return res.status(404).json({message: `no existo producto con nombre: ${productName}`, productNotFound: true})};
-        
-        await Product.destroy({where: {product: productName}});
+        if (!productToDelete) { return res.status(404).json({ message: `no existo producto con nombre: ${productName}`, productNotFound: true }) };
 
-        res.json({message: `Producto con nombre ${productName} eliminado comn exito`, productDeleted: true});
+        await Product.destroy({ where: { product: productName } });
+
+        res.json({ message: `Producto con nombre ${productName} eliminado comn exito`, productDeleted: true });
     } catch (error) {
         res.status(500).json(`Internal Server Error: ${error}`);
     }
 });
 
 // ruta para que admins puedan enviar email masivos a todos los usuarios registrados.
-app.post('/send-email-to-all-users', isAuthenticated, isAdmin, async(req, res) => {
-    const {subject, message} = req.body;
+app.post('/send-email-to-all-users', isAuthenticated, isAdmin, async (req, res) => {
+    const { subject, message } = req.body;
     if (!subject || !message) {
         return res.status(400).json('Faltan datos');
     }
@@ -1935,7 +1960,7 @@ app.post('/send-email-to-all-users', isAuthenticated, isAdmin, async(req, res) =
         if (allUserEmails.length === 0) {
             return res.status(404).json('No hay correos disponibles');
         }
-        
+
         const transporter = await initializeTransporter();
 
         for (const user of allUserEmails) {
@@ -1959,9 +1984,9 @@ app.post('/send-email-to-all-users', isAuthenticated, isAdmin, async(req, res) =
 //ruta para ver todos los favoritos que el usuario especifico tiene en su lista.
 app.get('/products/user/favorites', isAuthenticated, isUserBanned, async (req, res) => {
     const userId = req.user.userId; // <-- for each user specific data.
-    
+
     try {
-        const allFavorites = await Favorite.findAll({ where: { userId }, include: [Product] });
+        const allFavorites = await Favorite.findAll({ where: { userId }, include: [ Product ] });
         if (allFavorites.length === 0) {
             return res.status(404).json('No se han encontrado favoritos, intenta agregar uno.');
         } else {
@@ -1981,15 +2006,15 @@ app.post('/products/user/favorites', isAuthenticated, isUserBanned, async (req, 
     const { productId } = req.body;
 
     try {
-      
+
         const product = await Product.findByPk(productId);
         if (!product) {
             return res.status(404).json(`Product with id: ${productId} does not exist.`);
         }
-        
+
         const existingFavorite = await Favorite.findOne({ where: { userId, productId } });
         if (existingFavorite) {
-            return res.status(400).json({error: `Product with id ${productId} already in favorites.`, productAlreadyAddedToFavorites: true});
+            return res.status(400).json({ error: `Product with id ${productId} already in favorites.`, productAlreadyAddedToFavorites: true });
         }
 
         await Favorite.create({ userId, productId });
@@ -2008,7 +2033,7 @@ app.delete('/delete-favorite/:id', isAuthenticated, async (req, res) => {
 
     try {
         const favorite = await Favorite.findByPk(id);
-        
+
         if (!favorite) {
             return res.status(404).json({ error: `Product with id: ${id} does not exist`, productNotFound: true });
         }
@@ -2027,7 +2052,7 @@ app.delete('/delete-favorite/:id', isAuthenticated, async (req, res) => {
 
 
 // ruta para cambiar un producto de su categoria a otra. <-- falta verificar que funcione.
-app.put('/update-product-category', isAuthenticated, isAdmin, async(req, res) => {
+app.put('/update-product-category', isAuthenticated, isAdmin, async (req, res) => {
     const userId = req.user.userId;
     const categoryNames = req.body.categoryNames;
     const productId = req.body.productId;
@@ -2076,13 +2101,13 @@ app.get('/products/reported', isAuthenticated, isAdmin, async (req, res) => {
 
     try {
         const allReportedProducts = await ReportedProduct.findAll({
-            include: [{ model: User }, { model: Product }] // Include the users who reported the product and the reviews
+            include: [ { model: User }, { model: Product } ] // Include the users who reported the product and the reviews
         });
 
         if (allReportedProducts.length === 0) {
             return res.status(404).json('No reported products currently exist');
         }
-        
+
         res.json({ totalReports: allReportedProducts.length, result: allReportedProducts });
 
     } catch (error) {
@@ -2108,16 +2133,16 @@ app.get('/products/filter/:start/:end/:startRating/:endRating/:category/:brand',
     try {
         let filter = {
             price: {
-                [Op.between]: [start, end]
+                [ Op.between ]: [ start, end ]
             }
         };
 
         if (category) {
-            filter['$categories.category$'] = category;
+            filter[ '$categories.category$' ] = category;
         }
 
         if (brand) {
-            filter['$brand.brand$'] = brand;
+            filter[ '$brand.brand$' ] = brand;
         }
 
         const filteredProducts = await Product.findAll({
@@ -2132,7 +2157,7 @@ app.get('/products/filter/:start/:end/:startRating/:endRating/:category/:brand',
                     model: Review,
                     where: {
                         rating: {
-                            [Op.between]: [startRating, endRating]
+                            [ Op.between ]: [ startRating, endRating ]
                         }
                     }
                 },
@@ -2144,7 +2169,7 @@ app.get('/products/filter/:start/:end/:startRating/:endRating/:category/:brand',
         });
 
         console.log('FILTERED PRODUCTS:', filteredProducts);
-        
+
         if (filteredProducts.length === 0) {
             return res.status(404).json('No existen productos con los filtros aplicados');
         }
@@ -2220,7 +2245,7 @@ async function isUserBanned(req, res, next) {
 
 
 // ruta para que un admin pueda banear a un usuario (en horas). falta comprobar que FUNCIONE.
-app.post('/ban/:userId', isAuthenticated, isAdmin, async(req, res) => {
+app.post('/ban/:userId', isAuthenticated, isAdmin, async (req, res) => {
     const userId = req.params.userId;
     const banDurationHours = req.body.banDurationHours;
 
@@ -2236,18 +2261,18 @@ app.post('/ban/:userId', isAuthenticated, isAdmin, async(req, res) => {
     }); // <-- will always be found thanks to isAuthenticated
 
     if (!checkUser) {
-        return res.status(404).json({error: 'No existe el usuario ingresado', userNotFound: true})
+        return res.status(404).json({ error: 'No existe el usuario ingresado', userNotFound: true })
     };
 
 
     // check if user is trying to ban an admin or himself.
     if (checkUser.is_admin || checkUser.id === userId) {
-        return res.status(400).json({error: 'No puedes banear a otro usuario Admin ni a ti mismo.', invalidBan: true});
+        return res.status(400).json({ error: 'No puedes banear a otro usuario Admin ni a ti mismo.', invalidBan: true });
     };
-    
+
     try {
-        const user = await User.findByPk(userId) 
-        if (!user) {return res.status(404).json(`Usuario con id: ${userId} no existe`)};
+        const user = await User.findByPk(userId)
+        if (!user) { return res.status(404).json(`Usuario con id: ${userId} no existe`) };
 
         const banExpiration = new Date();
         banExpiration.setMinutes(banExpiration.getMinutes() + (banDurationHours * 60)); // Convert hours to minutes
@@ -2265,20 +2290,20 @@ app.post('/ban/:userId', isAuthenticated, isAdmin, async(req, res) => {
 }); // <-- solo falta comprobar que el ban haya sido levantado.
 
 // ruta para que un admin pueda ver todos los usuarios baneados.
-app.get('/all-banned-users', isAuthenticated, isAdmin, async(req, res) => {
-    
+app.get('/all-banned-users', isAuthenticated, isAdmin, async (req, res) => {
+
     try {
-        
+
         const allBannedUsers = await User.findAll({
             where: {
                 banned: true,
                 ban_expiration: {
-                    [Op.not]: null  
+                    [ Op.not ]: null
                 }
             }
         });
 
-        if (allBannedUsers.length === 0) {return res.status(404).json('No hay usuarios baneados.')};
+        if (allBannedUsers.length === 0) { return res.status(404).json('No hay usuarios baneados.') };
 
         const filteredBannedUsers = allBannedUsers.filter(user => user.ban_expiration && new Date() < new Date(user.ban_expiration));
 
@@ -2294,7 +2319,7 @@ app.get('/all-banned-users', isAuthenticated, isAdmin, async(req, res) => {
 });
 
 //ruta para que un admin manualmente pueda eliminar el ban.
-app.put('/ban/remove/:userId', isAuthenticated, isAdmin, async(req, res) => {})
+app.put('/ban/remove/:userId', isAuthenticated, isAdmin, async (req, res) => { })
 
 app.get('/test/ban', isAuthenticated, isUserBanned, (req, res) => {
     res.send('YOU ARE NOT BANNED ')
@@ -2305,8 +2330,8 @@ app.get('/test/ban', isAuthenticated, isUserBanned, (req, res) => {
 
 module.exports.bcrypt = bcrypt; // <-- heroku
 
-sequelize.sync({force: false}).then(() => { // <-- TEST SHIPPING HISTORIES. AND THE DEBUGGING ROUTE /ALLHISTORIES. 
-    const PORT = process.env.PORT || 3001; 
+sequelize.sync({ force: false }).then(() => { // <-- TEST SHIPPING HISTORIES. AND THE DEBUGGING ROUTE /ALLHISTORIES. 
+    const PORT = process.env.PORT || 3001;
     app.listen(PORT, () => {
         console.log(`Server running on Port: ${PORT}`);
     });
