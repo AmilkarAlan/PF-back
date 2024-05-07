@@ -32,6 +32,7 @@ const models = require('./models/associations');
 const crypto = require('crypto');
 const PaymentHistory = require('./models/PaymentHistory');
 const Shipping = require('./models/Shipping');
+const { log } = require('console');
 
 app.use(cors());
 app.use(express.json());
@@ -839,7 +840,7 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
         if (blackListedUsername) {
             return res.status(403).json({ message: 'Error, Tu cuenta ha sido eliminada.', userHasBeenDeleted: true });
         };
-        
+
         const user = await User.findOne({ where: { username } });
         if (!user) {
             return res.status(404).json({ message: `Username ${username} Not Found` });
@@ -1510,7 +1511,7 @@ app.get('/searchproduct/:productname', async (req, res) => {
 
     try {
         const products = await Product.findAll({
-            where: { product: productname },
+            where: { product: { [Op.iLike]: '%' + productname + '%' } }, // Busca coincidencias en cualquier parte del nombre
             include: [ Category ] // Include associated categories
         });
 
@@ -1524,7 +1525,6 @@ app.get('/searchproduct/:productname', async (req, res) => {
         res.status(500).json(`Internal Server Error: ${error}`);
     }
 })
-
 app.get('/allusers', isAuthenticated, isAdmin, async (req, res) => {
     try {
         const allUsers = await User.findAll({
@@ -2036,7 +2036,7 @@ app.get('/products/user/favorites', isAuthenticated, isUserBanned, async (req, r
 app.post('/products/user/favorites', isAuthenticated, isUserBanned, async (req, res) => {
     const userId = req.user.userId;
     const { productId } = req.body;
-
+    console.log(req.body);
     try {
 
         const product = await Product.findByPk(productId);
