@@ -2036,7 +2036,7 @@ app.get('/products/user/favorites', isAuthenticated, isUserBanned, async (req, r
 app.post('/products/user/favorites', isAuthenticated, isUserBanned, async (req, res) => {
     const userId = req.user.userId;
     const { productId } = req.body;
-    console.log(req.body);
+
     try {
 
         const product = await Product.findByPk(productId);
@@ -2059,26 +2059,27 @@ app.post('/products/user/favorites', isAuthenticated, isUserBanned, async (req, 
 });
 
 // ruta para eliminar un favorito por id.
-app.delete('/delete-favorite/:id', isAuthenticated, async (req, res) => {
+app.delete('/products/user/favorites', isAuthenticated, isUserBanned, async (req, res) => {
     const userId = req.user.userId;
-    const id = req.params.id;
+    const { productId } = req.body;
 
     try {
-        const favorite = await Favorite.findByPk(id);
-
-        if (!favorite) {
-            return res.status(404).json({ error: `Product with id: ${id} does not exist`, productNotFound: true });
+        const product = await Product.findByPk(productId);
+        if (!product) {
+            return res.status(404).json(`Product with id: ${productId} does not exist.`);
         }
 
-        if (favorite.userId !== userId) {
-            return res.status(403).json({ error: `You are not authorized to delete this favorite`, unauthorized: true });
+        const existingFavorite = await Favorite.findOne({ where: { userId, productId } });
+        if (!existingFavorite) {
+            return res.status(400).json({ error: `Product with id ${productId} is not in favorites.`, productNotInFavorites: true });
         }
 
-        await favorite.destroy();
+        await existingFavorite.destroy();
+        res.json(`Product with id: ${productId} successfully removed from favorites.`);
 
-        res.status(200).json({ message: `Favorite with id: ${id} has been deleted successfully` });
     } catch (error) {
-        res.status(500).json({ error: `Internal Server Error: ${error.message}` });
+        console.error('Error removing product from favorites:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
