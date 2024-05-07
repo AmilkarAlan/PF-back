@@ -3,7 +3,9 @@ const app = express();
 const { Op } = require('sequelize');
 const jwt = require('jsonwebtoken');
 const passport = require('passport')
-const LocalStrategy = require('passport-local').Strategy;
+//const LocalStrategy = require('passport-local').Strategy;
+//const GoogleStrategy = require('passport-google-oauth20').Strategy;
+// deprecated punycode: <-- nodemailer.
 const ExtractJwt = require('passport-jwt').ExtractJwt;
 //const bcrypt = require('bcrypt');
 const bcrypt = require('bcryptjs'); // <-- HEROKU.
@@ -12,10 +14,6 @@ const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const cors = require('cors');
 
-//importar la configuracion de passport.
-//const passportGoogleStrategy = require('./Passport')
-
-//models: <-- falta revisar BannedToken y asegurarse de que no hayan bugs.
 const User = require('./models/User');
 const Product = require('./models/Product');
 const Category = require('./models/Category');
@@ -26,6 +24,7 @@ const Favorite = require('./models/Favorite');
 const ReportedProduct = require('./models/ReportedProduct');
 const DeletedUser = require('./models/DeletedUser');
 const Order = require('./models/Order');
+const Newsletter = require('./models/Newsletter'); 
 
 const sequelize = require('./db');
 const models = require('./models/associations');
@@ -34,8 +33,15 @@ const PaymentHistory = require('./models/PaymentHistory');
 const Shipping = require('./models/Shipping');
 const { log } = require('console');
 
-app.use(cors());
+const { google } = require('googleapis');
+
 app.use(express.json());
+app.use(cors());
+// app.use(cors({
+//    origin: 'http://localhost:3000',
+//    credentials: true
+//  }));
+
 
 // configuracion de nodeMailer
 const nodemailerOptions = {
@@ -74,29 +80,187 @@ async function sendMail(transporter, to, subject, message) {
     }
 };
 
-//2FA 
-//middleware para ver revisar si es que usuario (un admin) tiene activado 2FA.
-async function requireTwoFactorAuthentication(req, res, next) {
-    // speakksy.generateSecret();
-    // verificar si is_admin es TRUE en User model
-    // si no lo es, entonces return next()
+// GOOGLE:
 
-    //luego crear ruta para activar y desactviar
-    // crear ruta para verificar codigo
-    // este utiliza google authenticator
-    const userId = req.user.userId
+function generateRandomPassword() {
+    // Generate a random string using characters and numbers
+    const randomString = Math.random().toString(36).slice(-8);
+    return randomString;
+}
+
+async function generateUniqueUsername(profile) {
     try {
-        const user = await User.findByPk(userId)
-        if (userId && user.is_admin && user.two_factor_authentication) {
-            // if user is admin then require them to verify their their otp
-            // now ask for their otp
-        } else {
-            return next();
+        const allCurrentUsernames = await User.findAll({ attributes: ['username'] });
+        const firstName = profile.givenName || 'first_name';
+        const lastName = profile.familyName || 'last_name';
+        let baseUsername = (firstName + lastName).toLowerCase();
+        let count = 1;
+        let uniqueUsername = baseUsername;
+        while (allCurrentUsernames.includes(uniqueUsername)) {
+            uniqueUsername = baseUsername + generateRandomString(getRandomInt(1, 50));
+            count++;
+        }
+        return uniqueUsername;
+    } catch (error) {
+        console.error('Error generating unique username:', error);
+        throw error;
+    }
+}
+
+
+
+function generateRandomString(length) {
+    const characters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let randomString = '';
+    for (let i = 0; i < length; i++) {
+        const randomIndex = Math.floor(Math.random() * characters.length);
+        randomString += characters[randomIndex];
+    }
+    return randomString;
+}
+
+function getRandomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function generateAccessToken(user) {
+    return jwt.sign({ userId: user.id, username: user.username }, 'access-secret', { expiresIn: '50m' });
+}
+
+function generateRefreshToken(user) {
+    return jwt.sign({ userId: user.id, username: user.username }, 'refresh-secret', { expiresIn: '15d' });
+}
+
+// FUNCTION PARA OBTENER OBJETO DE GOOGLE
+const GOOGLE_CLIENT_ID = '926697330995-00o61f7imftqa9skmqhiflo7qhgej52m.apps.googleusercontent.com';
+const GOOGLE_CLIENT_SECRET = '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';
+const CALLBACK_URL = 'http://localhost:3001/callback';
+
+
+const oauth2Client = new google.auth.OAuth2(
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    CALLBACK_URL
+);
+
+// GOOGLE ROUTES:
+app.get('/auth/google', (req, res) => {
+    const url = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: ['https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
+    });
+    res.redirect(url);
+  });
+
+
+// token generations
+function generateAccessToken(user) {
+    return jwt.sign({ userId: user.id, username: user.username }, 'access-secret', { expiresIn: '50m' });
+};
+
+function generateRefreshToken(user) {
+    return jwt.sign({ userId: user.id, username: user.username }, 'refresh-secret', { expiresIn: '15d' });
+};
+
+
+// create google user 
+const saltRounds = 10;
+
+async function processGoogleUser(userInfo, res) {
+    console.log(`User info: ${JSON.stringify(userInfo)}`);
+
+    if (!userInfo.id || !userInfo.email || !userInfo.given_name) {
+        console.error('Error: Essential user information is missing');
+        return res.status(400).json({ error: 'Missing required user data' });
+    }
+
+    try {
+        let user = await User.findOne({ where: { email: userInfo.email } });
+        if (user) {
+            console.log(`User with email: ${userInfo.email} already exists. Logging in.`);
+            const accessToken = generateAccessToken(user);
+            const refreshToken = generateRefreshToken(user);
+            return res.redirect(`http://localhost:3000/login#accessToken=${accessToken}&refreshToken=${refreshToken}`);
+        //    return res.json({ accessToken, refreshToken, message: 'Login successful' });
+        };
+
+        // If the user does not exist, create a new one
+        const username = await generateUniqueUsername({ givenName: userInfo.given_name, familyName: userInfo.family_name || '' });
+        const defaultPassword = userInfo.given_name ? userInfo.given_name.toLowerCase() : 'defaultpassword';
+        const hashedPassword = await bcrypt.hash(defaultPassword, saltRounds);
+
+        const transaction = await sequelize.transaction();
+        try {
+            user = await User.create({
+                email: userInfo.email,
+                first_name: userInfo.given_name,
+                last_name: userInfo.family_name || '',
+                username,
+                password: hashedPassword
+            }, { transaction });
+
+            await transaction.commit();
+            console.log(`New Google user created: ${username}`);
+
+            const accessToken = generateAccessToken(user);
+            const refreshToken = generateRefreshToken(user);
+
+            res.cookie('accessToken', accessToken, { httpOnly: false, secure: false, sameSite: 'strict' });
+            res.cookie('refreshToken', refreshToken, { httpOnly: false, secure: false, sameSite: 'strict' });
+        
+
+            return res.redirect(`http://localhost:3000/login#accessToken=${accessToken}&refreshToken=${refreshToken}`);
+
+          //  return res.json({ accessToken, refreshToken, message: 'New user created and logged in' });
+        } catch (error) {
+            await transaction.rollback();
+            console.error('Transaction error:', error);
+            return res.status(500).json({ error: 'Failed to create user', details: error });
         }
     } catch (error) {
-
+        console.error('Error processing Google user:', error);
+        return res.status(500).json({ error: 'Internal Server Error', details: error });
     }
 };
+
+
+
+
+
+ // CALLBACK
+ app.get('/callback', async (req, res) => {
+    const code = req.query.code;
+    if (!code) {
+        return res.status(400).json({ error: 'Authorization code not provided.' });
+    }
+
+    try {
+        const { tokens } = await oauth2Client.getToken(code);
+        oauth2Client.setCredentials(tokens);
+
+        google.oauth2('v2').userinfo.get({ auth: oauth2Client }, async (err, response) => {
+            if (err) {
+                console.error('Failed to retrieve user info:', err);
+                return res.status(500).json({ error: 'Failed to retrieve user data' });
+            }
+
+            if (!response || !response.data) {
+                console.error('No data received from Google userinfo API');
+                return res.status(404).json({ error: 'No user data received' });
+            }
+
+            await processGoogleUser(response.data, res);
+        });
+    } catch (error) {
+        console.error('Error exchanging code for tokens:', error);
+        res.status(500).json({ error: 'Internal Server Error', details: error });
+    }
+});
+
+
+
+// : GOOGLE
+
 
 // RUTA PARA DEBUGGING. utilizar otp_secret column
 app.post('/verify', isAuthenticated, async (req, res) => {
@@ -116,7 +280,7 @@ app.post('/verify', isAuthenticated, async (req, res) => {
             secret: user.otp_secret, // va a vericar con la column otp_secret.
             encoding: 'base32',
             token: otp,
-            window: 2
+            window: 1 // <-- se puede cambiar a 1: para que dura 30 segundos. estaba en 2
         });
 
         if (verified) {
@@ -153,7 +317,7 @@ app.post('/create-checkout-session', isAuthenticated, isUserBanned, async (req, 
     let orderId;
 
     if (!reqShippingId) {
-        return res.status(400).json('Debe entregar al menos un dato de envio (ID o nickname) de su direccion de envio')
+        return res.status(400).json({message: 'Debe entregar al menos un dato de envio (ID o nickname) de su direccion de envio', missingShippingInfo: true})
     };
 
     try {
@@ -176,8 +340,8 @@ app.post('/create-checkout-session', isAuthenticated, isUserBanned, async (req, 
         console.log(`USER SHIPPING ID: ${shippingId}`);
 
 
-        transaction = await sequelize.transaction();
-
+        transaction = await sequelize.transaction(); // <-- try making everything a transaction.
+        
         const items = [];
         const outOfStockProducts = [];
         const paymentHistoryData = [];
@@ -260,11 +424,19 @@ app.post('/create-checkout-session', isAuthenticated, isUserBanned, async (req, 
             payment_method_types: [ 'card' ],
             line_items: items,
             mode: 'payment',
-            success_url: 'http://localhost:3000/paymenthistory',
-            cancel_url: 'https://www.example.com/cancel',
+            success_url: 'http://localhost:3000/paymenthistory', 
+            cancel_url: 'http://localhost:3000/ordercancelled', 
         });
 
         await PaymentHistory.bulkCreate(paymentHistoryData);
+
+        // EMAIL
+        const userEmail = await User.findOne({where: userId}); // <-- will always be found.
+        if (session.success) {
+            const transporter = await initializeTransporter();
+            await sendMail(transporter, userEmail.email, 'Checkout successful', 
+            `You have bought the following products: ${paymentHistoryData.product[0].value} and your total amount is:  ${newOrder.totalAmount}`);
+        }; //
 
         res.json({ id: session.id });
     } catch (error) {
@@ -275,6 +447,58 @@ app.post('/create-checkout-session', isAuthenticated, isUserBanned, async (req, 
         res.status(500).json({ error: 'Internal server error' });
     }
 });
+
+// Stripe WEBHOOK
+app.post('/webhook', express.raw({ type: 'application/json' }), (request, response) => {
+    const sig = request.headers['stripe-signature'];
+    const endpointSecret = "whsec_yourWebhookSecret";  // Replace with your actual webhook secret
+
+    let event;
+    try {
+        event = stripe.webhooks.constructEvent(request.body, sig, endpointSecret);
+    } catch (err) {
+        return response.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === 'checkout.session.completed') {
+        
+        // insert into paymentHistory Order and send email confirmation.
+
+        console.log('Payment was successful:', session);
+    }
+
+    response.status(200).send();  // Acknowledge receipt of the event
+});
+
+app.listen(4242, () => console.log('Running on port 4242')); // <-- uses its own listening.
+
+
+
+// Stripe WEBHOOK
+app.post('/webhook', express.raw({ type: 'application/json' }), (request, response) => {
+    const sig = request.headers['stripe-signature'];
+    const endpointSecret = "whsec_yourWebhookSecret";  // Replace with your actual webhook secret
+
+    let event;
+    try {
+        event = stripe.webhooks.constructEvent(request.body, sig, endpointSecret);
+    } catch (err) {
+        return response.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === 'checkout.session.completed') {
+        
+        // insert into paymentHistory Order and send email confirmation.
+
+        console.log('Payment was successful:', session);
+    }
+
+    response.status(200).send();  // Acknowledge receipt of the event
+});
+
+app.listen(4242, () => console.log('Running on port 4242')); // <-- uses its own listening.
+
+
 
 // debugging route.                         <-----
 app.get('/allorders', isAuthenticated, isAdmin, async (req, res) => {
@@ -308,6 +532,92 @@ app.get('/my-orders', isAuthenticated, isUserBanned, async (req, res) => {
             }, {
                 model: Shipping // Include the Shipping model here
             } ]
+        });
+
+        if (allUserOrders.length === 0) {
+            return res.status(404).json('No tienes ningun historial de ordenes.')
+        };
+
+        res.json(allUserOrders);
+    } catch (error) {
+        res.status(500).json(`Internal Server error: ${error}`);
+    }
+});
+// debugging route.                         <-----
+app.get('/allorders',isAuthenticated, isAdmin, async(req, res) => {
+    try {
+        // Retrieve all orders along with associated user and product information
+        const allOrders = await Order.findAll({
+            include: [
+                { model: User }, // Include the User model
+                { model: Product } // <-- THIS IS MISSING ! 
+            ]
+        });
+
+        res.json(allOrders); // Return the list of all orders with associated user and product information
+    } catch (error) {
+        console.error('Error retrieving all orders:', error);
+        res.status(500).json({ error: 'Internal server error' }); // Return an error response if there's an error
+    }
+});
+
+// UN USUARIO PUEDE VER TODO SU HISTORIAL DE ORDENES. 
+app.get('/my-orders', isAuthenticated, isUserBanned, async (req, res) => {
+    const userId = req.user.userId;
+
+    try {
+        const allUserOrders = await Order.findAll({
+            where: {
+                userId: userId
+            },
+            include: [{
+                model: Product
+            }, {
+                model: Shipping // Include the Shipping model here
+            }]
+        });
+
+        if (allUserOrders.length === 0) {
+            return res.status(404).json('No tienes ningun historial de ordenes.')
+        };
+
+        res.json(allUserOrders);
+    } catch (error) {
+        res.status(500).json(`Internal Server error: ${error}`);
+    }
+});
+// debugging route.                         <-----
+app.get('/allorders',isAuthenticated, isAdmin, async(req, res) => {
+    try {
+        // Retrieve all orders along with associated user and product information
+        const allOrders = await Order.findAll({
+            include: [
+                { model: User }, // Include the User model
+                { model: Product } // <-- THIS IS MISSING ! 
+            ]
+        });
+
+        res.json(allOrders); // Return the list of all orders with associated user and product information
+    } catch (error) {
+        console.error('Error retrieving all orders:', error);
+        res.status(500).json({ error: 'Internal server error' }); // Return an error response if there's an error
+    }
+});
+
+// UN USUARIO PUEDE VER TODO SU HISTORIAL DE ORDENES. 
+app.get('/my-orders', isAuthenticated, isUserBanned, async (req, res) => {
+    const userId = req.user.userId;
+
+    try {
+        const allUserOrders = await Order.findAll({
+            where: {
+                userId: userId
+            },
+            include: [{
+                model: Product
+            }, {
+                model: Shipping // Include the Shipping model here
+            }]
         });
 
         if (allUserOrders.length === 0) {
@@ -372,11 +682,7 @@ app.post('/user/shipping', isAuthenticated, isUserBanned, async (req, res) => {
         if (existingShipping) {
             return res.status(400).json({ error: 'Ya tienes una dirección de envío con el mismo apodo.', nicknameAlreadyInUse: true });
         }
-
-        const addressCount = await Shipping.count({ where: { userId: userId } });
-        if (addressCount >= 10) {
-            return res.status(400).json({ error: 'Has alcanzado el límite máximo de direcciones de envío (10).', maxShipping: true });
-        }
+        
 
         // Create new shipping address
         const newShippingInfo = await Shipping.create({
@@ -433,6 +739,62 @@ app.put('/update-shipping-info', isAuthenticated, isUserBanned, async (req, res)
     }
 });
 
+// Route to delete a shipping info by shippingId (this is to interact with the front-end ShippingDetail component).
+app.delete('/delete-shipping-info/:shippingId', isAuthenticated, async (req, res) => {
+    const userId = req.user.userId;
+    const shippingId = req.params.shippingId; // <-- shippingId
+
+    if (!shippingId) {
+        return res.status(400).json({ error: 'Missing shippingId field', shippingIdNotProvided: true });
+    };
+
+    try {
+
+        // si el usuario ha comprado utilizando la direccion que intenta eliminar, no se debe dejar hacer tal operacion.
+        const ordersCount = await Order.count({
+            where: {
+                shippingId: shippingId
+            }
+        });
+       
+        if (ordersCount > 0) {
+            return res.status(400).json({ error: 'Cannot delete shipping address because it is associated with existing orders', invalidAddrDeletion: true });
+        };
+
+
+        const checkAddr = await Shipping.findByPk(shippingId);
+        if (!checkAddr) {
+            return res.status(404).json({ error: 'Shipping address not found', shippingAddrNotFound: true });
+        };
+
+        // If exists, then check that it belongs to the specific user.
+        const userAddr = await Shipping.findOne({
+            where: {
+                userId: userId,
+                shippingId: shippingId
+            }
+        });
+
+        if (!userAddr) {
+            return res.status(400).json({ error: 'You do not own this shipping address' , ownershipError: true});
+        };
+
+        // If all these checks passed, then the user surely owns such shippingId
+        await Shipping.destroy({
+            where: {
+                userId,
+                shippingId
+            }
+        });
+        res.status(201).json('Address deleted successfully');
+
+    } catch (error) {
+        console.error(`Error deleting shipping address: ${error}`);
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+});
+
+
 
 // ruta para que un usuario pueda ver su info de envio.
 app.get('/shipping-info', isAuthenticated, isUserBanned, async (req, res) => {
@@ -467,9 +829,15 @@ app.get('/generate-secret', isAuthenticated, isAdmin, async (req, res) => {
     const userId = req.user.userId;
 
     try {
+        
+        const user = await User.findOne({where: {id: userId}});
 
-        const user = await User.findOne({ where: { id: userId } });
-        if (user.otp_secret) { return res.status(400).json('Ya has creado tu secreto anteriormente.') };
+        // usuarios primero deben activar 2FA en /enable
+        if (!user.two_factor_authentication) {
+            return res.status(400).json('Primero debes activar la autenticación de dos factores.');
+        }
+
+        if (user.otp_secret) {return res.status(400).json('Ya has creado tu secreto anteriormente.')};
 
         const secret = speakeasy.generateSecret();
 
@@ -519,24 +887,27 @@ app.put('/2fa/activate', isAuthenticated, isAdmin, async (req, res) => {
 });
 
 
+
 function isAuthenticated(req, res, next) {
-    const token = req.headers.authorization && req.headers.authorization.split(' ')[ 1 ]; // extrae el token de los headers.
+    // Attempt to retrieve the token from the Authorization header or cookies
+    let token = req.headers.authorization ? req.headers.authorization.split(" ")[1] : null;
+    token = token || req.cookies.accessToken;
+
     if (!token) {
-        return res.status(401).json({ message: 'No token provided.' });
+        return res.status(401).json({ message: "Authentication token is missing" });
     }
 
-    //  if (isTokenBanned(token)) {
-    //      return res.status(403).json({ message: 'Token has been banned' });
-    //  }
-
-    jwt.verify(token, 'access-secret', (error, decoded) => {
-        if (error) {
-            return res.status(401).json({ message: 'Invalid access token.' });
-        }
+    try {
+        // Verify the token
+        const decoded = jwt.verify(token, 'access-secret');
         req.user = decoded;
         next();
-    });
-};
+    } catch (error) {
+        console.error('Failed to authenticate token:', error.message);
+        return res.status(401).json({ message: "Token is not valid" });
+    }
+}
+
 
 // Middleware to check for admin privileges
 async function isAdmin(req, res, next) {
@@ -563,7 +934,7 @@ function generateToken() {
 
 // ESTO NO TIENE EFECTO EN USUARIOS DE GOOGLE.
 // function must also send a token/code with an exp date so that certain users can access this page/route to reset password.
-app.post('/reset-password-request', isAuthenticated, isUserBanned, async (req, res) => {
+app.post('/reset-password-request', async (req, res) => { // <-- se ha quitado el middleware de authenticacion.
     const { email } = req.body;
 
     if (!email) {
@@ -574,7 +945,7 @@ app.post('/reset-password-request', isAuthenticated, isUserBanned, async (req, r
         const user = await User.findOne({ where: { email } });
 
         if (!user) {
-            return res.status(404).json({ message: 'User not found.' });
+            return res.status(404).json({ message: 'Email not found.' });
         }
 
         const resetToken = generateToken();
@@ -584,14 +955,14 @@ app.post('/reset-password-request', isAuthenticated, isUserBanned, async (req, r
         await user.update({ password_reset_token: resetToken, password_reset_token_expires: tokenExpiration });
 
         const transporter = await initializeTransporter();
-        const subject = 'password reset'
+        const subject = `Password reset for:  ${user.email}`
 
         await sendMail(transporter, email, subject, resetToken);
 
         console.log(`Reset token sent to user with email: ${email}`);
         console.log(`reset token: ${resetToken}`);
 
-        return res.status(200).json({ resetToken, expirationDate: tokenExpiration });
+        return res.status(200).json({ resetToken, expirationDate: tokenExpiration }); // AQUI SE DEBE QUITAR EL TOKEN EN LA VERSION FINAL.
     } catch (error) {
         console.error('Error resetting password:', error);
         return res.status(500).json({ error: 'Internal Server Error' });
@@ -601,10 +972,9 @@ app.post('/reset-password-request', isAuthenticated, isUserBanned, async (req, r
 
 // NO TIENE EFECTO EN USUARIOS DE GOOGLE.
 // this route must verify the code so that only users who requested a password reset can access it. 
-app.post('/reset-password', isAuthenticated, isUserBanned, async (req, res) => {
-    const userId = req.user.userId;
-    const resetToken = req.body.resetToken;
 
+app.post('/reset-password', async (req, res) => {  //< -- ya no require autenticacion.
+    const resetToken = req.body.resetToken;
     const newPassword = req.body.newPassword;
     const confirmNewPassword = req.body.confirmNewPassword;
 
@@ -613,27 +983,23 @@ app.post('/reset-password', isAuthenticated, isUserBanned, async (req, res) => {
     }
 
     try {
-        const user = await User.findByPk(userId);
+        const user = await User.findOne({ where: { password_reset_token: resetToken } });
 
         if (!user) {
-            return res.status(404).json({ message: 'User not found.' });
+            return res.status(404).json({ message: 'Invalid reset token' });
         }
 
-        if (user.password_reset_token !== resetToken || user.password_reset_token_expires < new Date()) {
-            return res.status(400).json({ message: 'Invalid or expired reset token.' });
-        }
-
-        if (!newPassword || !confirmNewPassword || newPassword !== confirmNewPassword) {
-            return res.status(400).json({ message: 'Credentials must be provided and must also match.' });
+        if (!newPassword || newPassword !== confirmNewPassword) {
+            return res.status(400).json({ message: 'Passwords do not match' });
         }
 
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         await user.update({ password: hashedPassword, password_reset_token: null, password_reset_token_expires: null });
 
-        return res.status(200).json({ message: 'Password reset successful.' });
+        return res.status(200).json({ message: 'Password reset successful' });
     } catch (error) {
         console.error('Error resetting password:', error);
-        return res.status(500).json({ error: 'Internal server error' });
+        return res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
@@ -645,13 +1011,17 @@ app.put('/users/grant-admin/:id', isAuthenticated, async (req, res) => { // debe
         return res.status(400).json('Must provide an id');
     };
 
-    if (req.user.is_admin) { return res.json('User is already an admin') }; // <- this line never triggers.
+    
 
     try {
         const user = await User.findByPk(id);
         if (!user) {
             return res.status(404).json({ message: 'User not found.' });
         }
+
+        if (user.is_admin) {
+            return res.status(400).json({message: `user with id: ${id} is already an admin`, alreadyAdmin: true});
+        };
 
         await user.update({ is_admin: true });
 
@@ -661,6 +1031,9 @@ app.put('/users/grant-admin/:id', isAuthenticated, async (req, res) => { // debe
         res.status(500).json({ error: 'Internal server error' });
     }
 });
+
+// make a user admin by username.
+
 
 // ruta para que un admin pueda ver todos los datos de un usuario especifico
 app.get('/users/info/details/:username', isAuthenticated, isAdmin, async (req, res) => {
@@ -833,8 +1206,12 @@ app.get('/test/admin', isAuthenticated, isAdmin, (req, res) => {
 app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y TIENE 2FA ACTIVADO ENTONCES REQUERIR OTP.
     const username = req.body.username;  // tambien se puede solicitar otp para eliminar usuario, producto, etc.
     const password = req.body.password;
+    const otp = req.body.otp;
+
+    if (!username && !password) {return res.status(400).json({missingCredentials: 'must include credentials'})};
 
     try {
+        
         //revisar el blacklist DeletedUser
         const blackListedUsername = await DeletedUser.findOne({ where: { username } });
         if (blackListedUsername) {
@@ -849,7 +1226,23 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
         const passwordMatch = await bcrypt.compare(password, user.password);
         if (!passwordMatch) {
             return res.status(401).json({ message: 'Invalid username or password.', invalidCredentials: true });
-        }
+        };
+
+
+        // si el usuario es loggeado con exito, podemos verificar 2fa si esta activado y si es admin.
+        let verified = true // <-- evitar error de undefined.
+        if (user.is_admin && user.two_factor_authentication) {
+             verified = speakeasy.totp.verify({
+                secret: user.otp_secret,
+                encoding: 'base32',
+                token: otp,
+                window: 1
+            })
+        };
+
+        if (!verified) {
+            return res.status(401).json({message: 'invalid otp', invalidOtp: true});
+        };
 
         // Generate new tokens
         const accessToken = jwt.sign({ userId: user.id, username: user.username }, 'access-secret', { expiresIn: '50m' });
@@ -857,41 +1250,10 @@ app.post('/login', async (req, res) => { // FALTA AGREGAR: SI USUARIO ES ADMIN Y
 
         res.json({ message: 'Login successful', accessToken, refreshToken });
     } catch (error) {
-        console.log(error);
-        return res.status(500).json({ message: 'Internal Server Error.' });
+        res.status(500).json(`Internal Server Error: ${error}`)
     }
 });
 
-//LOGOUT ROUTE. Falta arreglar
-app.post('/logout', isAuthenticated, async (req, res) => {
-    const accessToken = req.headers.authorization && req.headers.authorization.split(' ')[ 1 ]; // Extract access token
-    const refreshToken = req.body.refreshToken;
-
-    console.log(`Access Token: ${accessToken}`);
-    console.log(`Refresh Token: ${refreshToken}`);
-
-    try {
-        if (!refreshToken) {
-            return res.status(400).json('Debe incluir refresh token');
-        }
-
-
-        jwt.verify(refreshToken, 'refresh-secret', async (error, decoded) => {
-            if (error) {
-                return res.status(401).json({ message: 'Invalid refresh token.' });
-            }
-
-
-            await BannedToken.create({ token: accessToken });
-            await BannedToken.create({ token: refreshToken });
-
-
-            res.json({ logOutSuccessful: true, message: 'Logout successful' });
-        });
-    } catch (error) {
-        return res.status(500).json({ error: 'Internal server error', error });
-    }
-});
 
 // ruta actualizada: incluye email e email de bienvenida enviado automaticamente, tambien regex para confirmar email.
 // username and email must both be unique
@@ -906,6 +1268,12 @@ app.post('/signup', async (req, res) => {
     const emailRegex = /^[\w-]+(?:\.[\w-]+)*@(?:[\w-]+\.)+[a-zA-Z]{2,7}$/;
     if (!email || !email.match(emailRegex)) {
         return res.status(400).json(`Formato de email incorrecto`);
+        };
+
+    // VERIFICAR ESTE CHECK !   
+    const checkEmailExists = await User.findOne({where: {email}});
+    if (checkEmailExists) {
+        return res.status(400).json({message: `Email ${email} already exists`, emailAlreadyInUse: true})
     };
 
 
@@ -1551,12 +1919,21 @@ app.delete('/deleteuser/id/:id', isAuthenticated, isAdmin, async (req, res) => {
 
     try {
         const userToDelete = await User.findByPk(id);
+
+
+        // admins can't delete other admins
+        if (userToDelete && userToDelete.is_admin) {
+            return res.status(400).json({error: 'Cannot delete another admin', isUserAdmin: true});
+        };
+
         if (!userToDelete) {
             return res.status(404).json({
                 message: `No user with ID: ${id} was found.`,
                 noUserIdFound: true
             });
 
+            
+            
         } else {
 
             await Order.destroy({ where: { userId: userToDelete.id } });
@@ -1568,7 +1945,8 @@ app.delete('/deleteuser/id/:id', isAuthenticated, isAdmin, async (req, res) => {
             const userEmailToBan = userToDelete.email;
             const userUsernameToBan = userToDelete.username;
             // agregarlos a DeletedUser.
-            await DeletedUser.create({ userId: userToDelete, username: userUsernameToBan, email: userEmailToBan });
+            await DeletedUser.create({ userId: userToDelete.id, username: userUsernameToBan, email: userEmailToBan });
+
 
             await userToDelete.destroy();
 
@@ -1600,9 +1978,17 @@ app.delete('/deleteuser/:username', isAuthenticated, isAdmin, async (req, res) =
     try {
 
         const userToDelete = await User.findOne({ where: { username } });
+
+        // can't delete other admins.
+        if (userToDelete && userToDelete.is_admin) {
+            return res.status(400).json({error: 'cannot delete other admins', isUserAdmin: true})
+        };
+
         if (!userToDelete) {
             return res.status(404).json(`No se ha encontrado el usuario: ${username}`);
 
+        
+            
         } else {
 
 
@@ -1646,6 +2032,11 @@ app.delete('/deleteuser/email/:email', isAuthenticated, isAdmin, async (req, res
         const userToDelete = await User.findOne({
             where: { email }
         });
+
+        if (userToDelete && userToDelete.is_admin) {
+            return res.status(400).json({error: 'cannot delete another admin', isUserAdmin: true});
+        };
+
         if (userToDelete) {
 
             await Order.destroy({ where: { userId: userToDelete.id } });
@@ -1812,7 +2203,7 @@ app.get('/searchbyprice/asc', async (req, res) => {
             return res.status(404).json({ error: 'No se encontraron productos', productNotFound: true });
         };
 
-        res.json({ resultado: products.length, products: products });
+        res.json(products);
 
     } catch (error) {
         return res.status(500).json(`Internal Server Error: ${error}`);
@@ -2154,13 +2545,13 @@ app.get('/products/filter/:start/:end/:startRating/:endRating/:category/:brand',
     const { start, end, startRating, endRating, category, brand } = req.params;
 
     if (!start && !end && !startRating && !endRating && !category && !brand) {
-        return res.status(400).json('Debe incluir por lo menos 1 filtro');
+        return res.status(400).json({ error: 'Debe incluir por lo menos 1 filtro' });
     }
 
     // Regex.
     const numberRegex = /^\d+(\.\d+)?$/;
     if (!numberRegex.test(start) || !numberRegex.test(end) || !numberRegex.test(startRating) || !numberRegex.test(endRating)) {
-        return res.status(400).json('Los valores de inicio, fin y calificación deben ser números o decimales.');
+        return res.status(400).json({ error: 'Los valores de inicio, fin y calificación deben ser números o decimales.' });
     }
 
     try {
@@ -2204,7 +2595,7 @@ app.get('/products/filter/:start/:end/:startRating/:endRating/:category/:brand',
         console.log('FILTERED PRODUCTS:', filteredProducts);
 
         if (filteredProducts.length === 0) {
-            return res.status(404).json('No existen productos con los filtros aplicados');
+            return res.status(404).json({ error: 'No existen productos con los filtros aplicados' });
         }
 
         res.json(filteredProducts);
@@ -2243,6 +2634,105 @@ async function isUserBanned(req, res, next) {
     }
 };
 
+//NEWSLETTER ROUTES:
+app.post('/newsletter/:email', async(req, res) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; 
+    const email = req.params.email;
+    if (!email || !emailRegex.test(email)) {
+        return res.status(400).json({ message: 'Invalid email format', invalidEmail: true });
+    }
+
+
+    try {
+
+        // first check if the email is already in the Newsletter itself to avoid showing a db error.
+        const emailAlreadyInNewsletter = await Newsletter.findOne({where: {email}});
+        if (emailAlreadyInNewsletter) {
+            return res.status(400).json({message: 'email already in newsletter', emailAlreadyAdded: true})
+        };
+
+        // check if email to be inserted in the newsletter model, first exists or not in the User model.
+        const checkEmailExists  = await User.findOne({where: {email: email}});
+        if (checkEmailExists) {
+            return res.status(400).json({message: 'email already in User model', emailInUserModel: true});
+        };
+
+        await Newsletter.create({email});
+
+        res.status(201).json({successMessage: 'email added to newsletter successfully', success: true});
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    };
+});
+
+// admins can email all of the newsletter emails.
+// if an email form newsletter is also now in the User table, then it must be deleted on the 'fly' and emails not sent to 
+//such addresses
+app.post('/email-all-newsletter', isAuthenticated, isAdmin, async(req, res) => {
+    const {subject, body} = req.body;
+    if (!subject || !body) {
+        return res.status(400).json({message: 'missing fields', missingFields: true});
+    };
+
+    try {
+
+        // this must check if any of the newletter emails also now exist in the User table.
+        const newsletterEmails = await Newsletter.findAll();
+        const allUserEmails = await User.findAll({attributes: ['email']});
+
+        // check if there are any matches, if there are: delete those emails from the newletter model
+        // before sending the emails
+        const userEmails = allUserEmails.map(user => user.email); // <-- extract all emails from the User model.
+
+        const emailsToRemove = []; // <-- emails to delete from the Newsletter model.
+        const emailsToSend = [];
+
+        // filter.
+        newsletterEmails.forEach(emailObj => {
+            if (userEmails.includes(emailObj.email)) {
+                emailsToRemove.push(emailObj.email);
+            } else {
+                emailsToSend.push(emailObj.email);
+            }
+        });
+
+
+        await Newsletter.destroy({where: {email: emailsToRemove}});
+
+        const transporter = await initializeTransporter();
+
+        const sentEmails = await Promise.all(emailsToSend.map(async (email) => {
+            await sendMail(transporter, email, subject, body);
+            return email;
+        }));
+
+        console.log(`Sending emails to newsletter users: ${sentEmails.join(', ')}`);
+
+        res.json({ successMessage: 'Emails sent successfully', sentEmails }); // <-- todo funciona.
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+
+});
+
+// get all of the emails in the newsletter
+app.get('/all-newsletter-emails', isAuthenticated, isAdmin, async(req, res) => {
+    try {
+
+        const allNewsletterEmails = await Newsletter.findAll();
+        
+        if (allNewsletterEmails.length === 0) {
+            return res.status(404).json({message: 'No emails found', emailsNotFound: true});
+        };
+
+        res.json(allNewsletterEmails);
+        
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`)
+    }
+});
 
 
 
@@ -2315,12 +2805,18 @@ app.post('/ban/:userId', isAuthenticated, isAdmin, async (req, res) => {
             ban_expiration: banExpiration // Update the ban expiration time
         });
 
+        // ENVIAR EMAIL
+        const transporter = await initializeTransporter();
+        await sendMail(transporter, user.email, 'Tu cuenta ha sido baneada', 
+            `Tu cuenta ha sido baneada por ${banDurationHours} horas por no seguir las reglas`);
+
+
         return res.json(`Usuario con id: ${userId} baneado por ${banDurationHours} horas.`);
 
     } catch (error) {
         res.status(500).json(`Internal Server Error: ${error}`)
     }
-}); // <-- solo falta comprobar que el ban haya sido levantado.
+}); 
 
 // ruta para que un admin pueda ver todos los usuarios baneados.
 app.get('/all-banned-users', isAuthenticated, isAdmin, async (req, res) => {
@@ -2351,24 +2847,603 @@ app.get('/all-banned-users', isAuthenticated, isAdmin, async (req, res) => {
     }
 });
 
+// FULFILL ORDERS.
+// solamente se puede pasar de pendiente a completado, no al reves.
+app.put('/orders/fulfill', isAuthenticated, isAdmin, async (req, res) => {
+    const orderId = req.body.orderId;
+
+    if (!orderId) {
+        return res.status(400).json({ message: 'missing orderId field', missingOrderId: true });
+    }
+
+    try {
+        const order = await Order.findByPk(orderId);
+
+        if (!order) {
+            return res.status(404).json({ message: `order number: ${orderId} not found`, orderNotFound: true });
+        }
+
+        if (order.paymentStatus === 'fulfilled') {
+            return res.status(400).json({ error: `order ${orderId} is already fulfilled`, orderAlreadyFulfilled: true });
+        }
+
+        await order.update({ paymentStatus: 'fulfilled' });
+
+    
+        res.json('orden fulfilled correctly')
+
+    } catch (error) {
+        res.status(500).json({ error: `Internal Server Error: ${error}` });
+    }
+});
+
+
+// search bar in component: AllPendingOrders .
+app.get('/search-orders/:id', isAuthenticated, isAdmin, async(req, res) => {
+    const { id } = req.params; 
+
+    if (!id) {
+        return res.status(400).json({ error: 'missing id', missingId: true });
+    }
+
+    try {
+        const findOrder = await Order.findByPk(id);
+
+        if (!findOrder) {
+            return res.status(404).json({ message: `order with id: ${id} was not found`, orderNotFound: true });
+        }
+
+        res.json(findOrder);
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+});
+
+
+// Usuario puede filtrar por ordenes entre pending y completado.
+// IMPORTANTE: <-- esto se utilizara para aplicar filtros en /orders en el frontend
+app.get('/my-orders/pending', isAuthenticated, isUserBanned, async(req, res) => {
+    const userId = req.user.userId;
+
+    try {
+        
+        const pendingOrders = await Order.findAll({
+            where: {
+                userId: userId,
+                paymentStatus: 'pending'
+            },
+            include: [
+                {model: Product},
+                {model: Shipping}
+            ]
+        });
+
+        if (pendingOrders.length === 0) {
+            return res.status(404).json({message: 'no pending orders found', noPendingOrders: true});
+        };
+
+        res.json(pendingOrders);
+
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+});
+
+// usuario puede filtrar por ordenes que se encuentren en estado: fulfilled <-- esto se utilizara para filtrar en el Order component.
+app.get('/my-orders/fulfilled', isAuthenticated, isUserBanned, async(req, res) => {
+    const userId = req.user.userId;
+
+    try {
+        
+        const fulfilledOrders = await Order.findAll({
+            where: {
+                userId,
+                paymentStatus: 'fulfilled'
+            },
+            include: [
+                {model: Product},
+                {model: Shipping}
+            ]
+        });
+
+        if (fulfilledOrders.length === 0) {
+            return res.status(404).json({message: 'You have no fulfilled orders', noFulfilledOrders: true});
+        };
+
+        res.json(fulfilledOrders);
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+
+});
+
+// usuario puede filtrar en su historial de ordenes basado en totalAmount, precio asc y desc.
+app.get('/my-orders/asc', isAuthenticated, isUserBanned, async (req, res) => {
+    const userId = req.user.userId;
+    try {
+        const allUserOrderAsc = await Order.findAll({
+            where: {
+                userId
+            },
+            order: [['totalAmount', 'ASC']],
+            include: [
+                { model: Product },
+                { model: Shipping } 
+            ]
+        });
+
+        if (allUserOrderAsc.length === 0) {
+            return res.status(404).json('Aun no existen ordenes')
+        };
+
+        res.json(allUserOrderAsc);
+    } catch (error) {
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+app.get('/my-orders/desc', isAuthenticated, isUserBanned, async (req, res) => {
+    const userId = req.user.userId;
+    try {
+        const allUserOrderDesc = await Order.findAll({
+            where: {
+                userId
+            },
+            order: [['totalAmount', 'DESC']],
+            include: [
+                { model: Product },
+                { model: Shipping }
+            ]
+        });
+
+        if (allUserOrderDesc.length === 0) {
+            return res.status(404).json('Aun no tienes ordenes');
+        };
+
+        res.json(allUserOrderDesc);
+    } catch (error) {
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+
+//ROUTE TO CREATE AN ADMIN USER.
+app.post('/users/create-admin', isAuthenticated, isAdmin, async(req, res) => { // <-- FALTA PROBAR.
+    const {
+        first_name,
+        last_name,
+        username,
+        email,
+        password,
+        is_admin // < -- BOOLEAN
+    } = req.body;
+
+    try {
+        // validar username y correo si es que estan en uso actualmente.
+        const checkUsernameInUse = await User.findOne({where: {username}});
+        if (checkUsernameInUse) {
+            return res.status(400).json({message: `Username ${username} is already in use`, usernameAlreadyExists: true});
+        };
+
+        const checkEmailExists = await User.findOne({where: {email}});
+        if (checkEmailExists) {
+            return res.status(400).json({message: `Email ${email} already in use`, emailAlreadyInUse: true});
+        };
+
+        // is_admin = BOOLEAN.
+        if (is_admin !== 'false' || is_admin !== 'true') {
+            return res.status(400).json({message: 'Provide a valid value for is_admin', invalidAdminAssigment: true})
+        };
+
+        const newUser = await User.create({
+            first_name,
+            last_name,
+            username,
+            email,
+            password,
+            is_admin
+        });
+
+        // EMAIL
+        userEmail = req.body.email;
+        const transporter = await initializeTransporter();
+        await sendMail(transporter, userEmail, 'Your account has been created', 'Your account has been created by an admin' );
+
+        res.json({successMessage: 'User created successfuly', user: newUser});
+        
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+
+});
+
+
+
+// ROUTE TO GIVE AN EXISTING USER ADMIN PRIVILEGES, THEY MUST GET AN EMAIL. by username
+app.put('/grant-admin-by-username', isAuthenticated, isAdmin, async(req, res) => {
+    const username = req.body.username;
+
+    if (!username) {
+        return res.status(400).json({message: 'Missing username'})
+    };
+
+    try {
+        
+        const checkUser = await User.findOne({where: {username}});
+
+        if (!checkUser) {
+            return res.status(404).json({message: `User: ${username} not found`, userNotFound: true});
+        };
+
+
+        if (checkUser.is_admin ) {
+            return res.status(400).json({message: `User ${username} is already an admin`, isUserAdmin: true});
+        };
+
+        await checkUser.update({
+            is_admin: true
+        });
+
+        // email user who just became an admin
+        const transporter = await initializeTransporter();
+        await  sendMail(transporter, checkUser.email, 'You are now an admin', 
+    'you have are now an admin user, congrats !');
+
+    res.json(`User ${username} has been granted admin privileges`);
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+}); 
+
+// Combina 3 rutas de 2FA de manera correcta, para hacerlo mucho mas facil en el front end.
+app.put('/2fa/activate-and-generate-secret', isAuthenticated, isAdmin, async (req, res) => {
+    const userId = req.user.userId;
+
+    try {
+        const user = await User.findOne({ where: { id: userId } });
+        
+        if (user.two_factor_authentication && user.otp_secret) {
+            return res.status(400).json('Ya tienes activada la autenticación de dos factores.');
+        }
+        
+        const secret = speakeasy.generateSecret();
+        
+        const otpAuthUrl = speakeasy.otpauthURL({ secret: secret.base32, label: 'MyApp' });
+        
+        QRCode.toDataURL(otpAuthUrl, async (error, imageUrl) => {
+            if (error) {
+                return res.status(500).json('Error generating QR code');
+            } else {
+                // Save the secret and update 2FA status after successful QR code generation
+                await user.update({
+                    otp_secret: secret.base32,
+                    two_factor_authentication: true
+                });
+                return res.json({ secret: secret.base32, qrCodeImageUrl: imageUrl });
+            }
+        });
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error.message}`);
+    }
+});
+
+/**
+ app.put('/2fa/activate-and-generate-secret', isAuthenticated, isAdmin, async (req, res) => {
+    const userId = req.user.userId;
+
+    try {
+        const user = await User.findOne({ where: { id: userId } });
+        
+        if (user.otp_secret) {
+            return res.status(400).json('Ya tienes activada la autenticación de dos factores.');
+        }
+        
+        const secret = speakeasy.generateSecret();
+        const otpAuthUrl = speakeasy.otpauthURL({ secret: secret.base32, label: 'MyApp' });
+
+        // Return QR code URL to the client
+        const imageUrl = await new Promise((resolve, reject) => {
+            QRCode.toDataURL(otpAuthUrl, (error, imageUrl) => {
+                if (error) {
+                    reject('Error generating QR code');
+                } else {
+                    resolve(imageUrl);
+                }
+            });
+        });
+
+        // Send QR code URL to the client
+        res.json({ secret: secret.base32, qrCodeImageUrl: imageUrl });
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error.message}`);
+    }
+});
+
+ */
+
+
+// see all pending orders. <-- admin dashboard.
+// puede haber un boton debajo de cada order, que al ser presionado interactue automaticamente con la ruta
+// para completar una order.
+app.get('/all-orders', isAuthenticated, isAdmin, async(req, res) => {
+
+    try {
+        
+        const allOrders = await Order.findAll({
+            include: [
+                { model: User }, // Include the User model
+                { model: Product } // Include the Product model
+            ]
+        });
+
+        if (allOrders.length === 0) {
+            return res.status({message: 'there are no orders yet', noOrders: true})
+        };
+
+        res.json(allOrders)
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`)
+    }
+});
+
+// see all pending orders.  <-- admin dashboard.
+app.get('/all-orders/pending', isAuthenticated, isAdmin, async(req, res) => {
+    
+    try {
+        
+        const allPendingOrders = await Order.findAll({
+            where: {
+                paymentStatus: 'pending'
+            },
+            include: [
+                {model: User},
+                {model: Product}
+            ]
+        });
+
+        if (allPendingOrders.length === 0) {
+            return res.status(404).json({message: 'There are no pending orders yet', noPendingOrders: true});
+        };
+
+        res.json({totalCount: allPendingOrders.length, allPendingOrders})
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`)
+    }
+});
+
+// this route must return the order of all the pending orders by price ascending
+app.get('/all-orders/pending/asc', isAuthenticated, isAdmin, async (req, res) => {
+    try {
+        const allPendingOrders = await Order.findAll({
+            where: {
+                paymentStatus: 'pending'
+            },
+            include: [
+                { model: User },
+                { model: Product }
+            ],
+            order: [['totalAmount', 'ASC']] // Sort by totalAmount in ascending order
+        });
+
+        if (allPendingOrders.length === 0) {
+            return res.status(404).json({ message: 'There are no pending orders yet', noPendingOrders: true });
+        }
+
+        res.json({ totalCount: allPendingOrders.length, allPendingOrders });
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+});
+
+// this route must return the order of all the pending orders by price descending
+app.get('/all-orders/pending/desc', isAuthenticated, isAdmin, async (req, res) => {
+    try {
+        const allPendingOrders = await Order.findAll({
+            where: {
+                paymentStatus: 'pending'
+            },
+            include: [
+                { model: User },
+                { model: Product }
+            ],
+            order: [['totalAmount', 'DESC']] // Sort by totalAmount in descending order
+        });
+
+        if (allPendingOrders.length === 0) {
+            return res.status(404).json({ message: 'There are no pending orders yet', noPendingOrders: true });
+        }
+
+        res.json({ totalCount: allPendingOrders.length, allPendingOrders });
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+});
+
+
+
+// see all fulfilled orders. <-- admin dashboard.
+app.get('/all-orders/fulfilled', isAuthenticated, isAdmin, async(req, res) => {
+
+    try {
+        
+        const allFulfilledOrders = await Order.findAll({
+            where: {
+                paymentStatus: 'fulfilled'
+            },
+            include: [
+                {model: User},
+                {model: Product}
+            ]
+        });
+
+        if (allFulfilledOrders.length === 0) {
+            return res.status(404).json({message: 'No fulfilled oders yet', noFulfilledOrders: true});
+        };
+
+        res.json(allFulfilledOrders);
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+});
+
+// en caso de olvidarlo, si el usuario esta loggeado puede volver a verlo
+app.get('/secret/get-secret', isAuthenticated, async(req, res) => {
+    const userId = req.user.userId;
+
+    try {
+        
+        const userSecret = await User.findOne({
+            where: {
+                id: userId, // <-- FUNCIONA !
+            },
+            attributes: ['otp_secret']
+        });
+
+        if (!userSecret.otp_secret) {
+            return res.status(404).json({message: "You haven't yet generated your secret", secretNotFound: true})
+        };
+
+        res.json(userSecret)
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`)
+    }
+});
+
+// ruta para que usuarios puedan cambiar su profile info.
+app.put('/profile/update-profile-info', isAuthenticated, isUserBanned, async (req, res) => {
+    const userId = req.user.userId;
+    const { new_first_name, new_last_name, new_username, confirmNewUsername } = req.body;
+
+    if (!new_first_name && !new_last_name && !new_username && !confirmNewUsername) {
+        return res.status(400).json({ message: 'must provide at least 1 value to update', missingFields: true });
+    };
+
+    if (new_username !== confirmNewUsername) {
+        return res.status(400).json({ message: 'Usernames must match', usernamesMustMatch: true });
+    }
+
+    try {
+
+        /*
+        // check if users are updating their current name and lastname to the ones that are already set.
+        const checkFirstName = await User.findOne({where: {userId}, attributes: ['first_name']});
+        const checkLastName = await User.findOne({where: {userId}, attributes: ['last_name']});
+        if (checkFirstName === new_first_name || checkLastName === new_last_name) {
+            return res.status(400).json({message: 'You did not provide new values for first name or last name fields', noNewValues: true})
+        };
+        */
+
+        const updatedFields = {};
+        
+        if (new_first_name) updatedFields.first_name = new_first_name;
+        if (new_last_name) updatedFields.last_name = new_last_name;
+        if (new_username) updatedFields.username = new_username;
+
+        // se encarga de arreglar undefined where clause, haciendo que el usuario solamente actualize lo que desee.
+        if (new_username && confirmNewUsername) {
+            const checkUsernameInUse = await User.findOne({ where: { username: confirmNewUsername } });
+            if (checkUsernameInUse) {
+                return res.status(400).json({ message: `Username already in use: ${confirmNewUsername}`, usernameAlreadyExists: true });
+            }
+        }
+
+        const [numAffectedRows, updatedUsers] = await User.update(updatedFields, { where: { id: userId }, returning: true });
+
+        if (numAffectedRows === 0) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const updatedUser = updatedUsers[0];
+
+        res.status(201).json({ successMessage: 'Profile info updated successfully', updatedUser });
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+});
+
+
+
+// ruta para que un usuario LOGGEADO, pueda cambiar su password sin tener que recibir un email.
+app.put('/user/update-user-password', isAuthenticated, isUserBanned, async (req, res) => {
+    const userId = req.user.userId;
+    const { password, newPassword, confirmNewPassword } = req.body;
+
+    if (!password || !newPassword || !confirmNewPassword) {
+        return res.status(400).json({ message: 'Missing required fields', missingInfo: true });
+    }
+
+    if (newPassword.length < 8 || confirmNewPassword.length < 8) {
+        return res.status(400).json({ message: 'Passwords must be at least 8 characters in length', passwordTooShort: true });
+    }
+
+    try {
+        const user = await User.findByPk(userId);
+
+        // Verify old password
+        const passwordMatch = await bcrypt.compare(password, user.password);
+        if (!passwordMatch) {
+            return res.status(400).json({ message: 'Invalid old password', invalidOldPassword: true });
+        }
+
+        // Hash the new password
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        // Update the user's password in the database
+        await User.update({ password: hashedPassword }, { where: { id: userId } });
+
+        res.status(200).json({ message: 'Password updated successfully' });
+    } catch (error) {
+        console.error('Error updating password:', error);
+        res.status(500).json({ message: 'Internal Server Error' });
+    }
+});
+
+
 //ruta para que un admin manualmente pueda eliminar el ban.
-app.put('/ban/remove/:userId', isAuthenticated, isAdmin, async (req, res) => { })
+app.put('/ban/remove/:userId', isAuthenticated, isAdmin, async(req, res) => { // <-- FALTA PROBAR.
+    const userId = req.params.userId;
+    if (!userId) {
+        return res.status(400).json({message: 'Missing id field', missingUserId: true});
+    };
+
+    try {
+        
+        const allBannedUsers = await User.findAll({where: {banned: true}});
+        if (allBannedUsers.length === 0) {
+            return res.status(404).json({message: 'No banned users were found', noBannedUsersFound: true});
+        };
+
+        res.json(allBannedUsers)
+
+    } catch (error) {
+        res.status(500).json(`Internal Server Error: ${error}`);
+    }
+});
 
 app.get('/test/ban', isAuthenticated, isUserBanned, (req, res) => {
     res.send('YOU ARE NOT BANNED ')
 });
 
 
-
+module.exports = app; // <-- PASSPORT 
 
 module.exports.bcrypt = bcrypt; // <-- heroku
 
-sequelize.sync({ force: false }).then(() => { // <-- TEST SHIPPING HISTORIES. AND THE DEBUGGING ROUTE /ALLHISTORIES. 
-    const PORT = process.env.PORT || 3001;
+sequelize.sync({alter: false}).then(() => { // <-- TEST SHIPPING HISTORIES. AND THE DEBUGGING ROUTE /ALLHISTORIES. 
+    const PORT = process.env.PORT || 3001; 
     app.listen(PORT, () => {
         console.log(`Server running on Port: ${PORT}`);
     });
 });
+
 
 
 /*
