@@ -470,7 +470,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (request, respon
     response.status(200).send();  // Acknowledge receipt of the event
 });
 
-app.listen(4242, () => console.log('Running on port 4242')); // <-- uses its own listening.
+// app.listen(4242, () => console.log('Running on port 4242')); // <-- uses its own listening.
 
 
 
@@ -496,7 +496,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (request, respon
     response.status(200).send();  // Acknowledge receipt of the event
 });
 
-app.listen(4242, () => console.log('Running on port 4242')); // <-- uses its own listening.
+// app.listen(4242, () => console.log('Running on port 4242')); // <-- uses its own listening.
 
 
 
@@ -3320,13 +3320,13 @@ app.get('/secret/get-secret', isAuthenticated, async(req, res) => {
 // ruta para que usuarios puedan cambiar su profile info.
 app.put('/profile/update-profile-info', isAuthenticated, isUserBanned, async (req, res) => {
     const userId = req.user.userId;
-    const { new_first_name, new_last_name, new_username, confirmNewUsername } = req.body;
+    const { first_name, last_name, username, confirm_new_username } = req.body;
 
-    if (!new_first_name && !new_last_name && !new_username && !confirmNewUsername) {
+    if (!first_name && !last_name && !username && !confirm_new_username) {
         return res.status(400).json({ message: 'must provide at least 1 value to update', missingFields: true });
     };
 
-    if (new_username !== confirmNewUsername) {
+    if (username && username !== confirm_new_username) {
         return res.status(400).json({ message: 'Usernames must match', usernamesMustMatch: true });
     }
 
@@ -3343,15 +3343,15 @@ app.put('/profile/update-profile-info', isAuthenticated, isUserBanned, async (re
 
         const updatedFields = {};
         
-        if (new_first_name) updatedFields.first_name = new_first_name;
-        if (new_last_name) updatedFields.last_name = new_last_name;
-        if (new_username) updatedFields.username = new_username;
+        if (first_name) updatedFields.first_name = first_name;
+        if (last_name) updatedFields.last_name = last_name;
+        if (username) updatedFields.username = username;
 
         // se encarga de arreglar undefined where clause, haciendo que el usuario solamente actualize lo que desee.
-        if (new_username && confirmNewUsername) {
-            const checkUsernameInUse = await User.findOne({ where: { username: confirmNewUsername } });
+        if (username && confirm_new_username) {
+            const checkUsernameInUse = await User.findOne({ where: { username: confirm_new_username } });
             if (checkUsernameInUse) {
-                return res.status(400).json({ message: `Username already in use: ${confirmNewUsername}`, usernameAlreadyExists: true });
+                return res.status(400).json({ message: `Username already in use: ${confirm_new_username}`, usernameAlreadyExists: true });
             }
         }
 
@@ -3374,13 +3374,13 @@ app.put('/profile/update-profile-info', isAuthenticated, isUserBanned, async (re
 // ruta para que un usuario LOGGEADO, pueda cambiar su password sin tener que recibir un email.
 app.put('/user/update-user-password', isAuthenticated, isUserBanned, async (req, res) => {
     const userId = req.user.userId;
-    const { password, newPassword, confirmNewPassword } = req.body;
+    const { password, new_password, confirm_new_password } = req.body;
 
-    if (!password || !newPassword || !confirmNewPassword) {
+    if (!password || !new_password || !confirm_new_password) {
         return res.status(400).json({ message: 'Missing required fields', missingInfo: true });
     }
 
-    if (newPassword.length < 8 || confirmNewPassword.length < 8) {
+    if (new_password.length < 8 || confirm_new_password.length < 8) {
         return res.status(400).json({ message: 'Passwords must be at least 8 characters in length', passwordTooShort: true });
     }
 
@@ -3394,7 +3394,7 @@ app.put('/user/update-user-password', isAuthenticated, isUserBanned, async (req,
         }
 
         // Hash the new password
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        const hashedPassword = await bcrypt.hash(new_password, 10);
 
         // Update the user's password in the database
         await User.update({ password: hashedPassword }, { where: { id: userId } });
